@@ -1,0 +1,52 @@
+handlers:
+  package_names:
+    - grpc
+  path_contains:
+    - /handler/
+    - /transport/
+
+ignore_calls:
+  auto_stdlib: true
+  packages:
+    - log
+    - logger
+  symbols:
+    - helper.Noop
+
+classifiers:
+  - layer: usecase
+    path_contains:
+      - /usecase/
+      - /application/
+    type_contains:
+      - usecase
+  - layer: service
+    path_contains:
+      - /service/
+    type_contains:
+      - service
+  - layer: repository
+    path_contains:
+      - /repository/
+      - /repositories/
+    type_contains:
+      - repository
+      - store
+  - layer: external_client
+    type_contains:
+      - client
+  - layer: converter
+    method_prefixes:
+      - convert
+    method_contains:
+      - toentity
+      - topb
+      - toproto
+
+implementation:
+  mock_receiver_prefixes:
+    - Mock
+    - Fake
+  mock_path_contains:
+    - /mocks/
+    - /testdata/
