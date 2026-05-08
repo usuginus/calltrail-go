@@ -3,6 +3,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/usuginus/calltrail-go/internal/model"
@@ -10,49 +11,85 @@ import (
 
 func WriteMarkdown(w io.Writer, flows []model.APIFlow) error {
 	for _, flow := range flows {
-		if err := writeFlowHeader(w, flow); err != nil {
+		if _, err := fmt.Fprintf(w, "## %s\n\n", flow.Name); err != nil {
 			return err
 		}
+		writeExecutionSummary(w, flow)
+		writeLayerSummary(w, flow)
+		writeDecisionPoints(w, flow)
+	}
+	return nil
+}
 
-		allCalls := collectCalls(flow)
-		for _, layer := range flow.Trail.Layers {
-			writeOperations(w, layer.Name, layer.Calls, allCalls)
+func writeExecutionSummary(w io.Writer, flow model.APIFlow) {
+	fmt.Fprintln(w, "### execution summary")
+	fmt.Fprintf(w, "- kind: `%s`\n", flow.Kind)
+	fmt.Fprintf(w, "- handler: %s\n", callReference(model.CallRef{
+		Symbol: flow.Entrypoint.Symbol,
+		File:   flow.Entrypoint.File,
+		Line:   flow.Entrypoint.Line,
+	}))
+	fmt.Fprintf(w, "- request: `%s`\n", flow.Request.Type)
+	fmt.Fprintf(w, "- response: `%s`\n", flow.Response.Type)
+
+	if counts := layerOperationCounts(flow); len(counts) > 0 {
+		fmt.Fprintln(w, "- layers:")
+		for _, count := range counts {
+			fmt.Fprintf(w, "  - %s: %d operations\n", count.Name, count.Count)
 		}
-		writeInterfaceCalls(w, flow.Trail.InterfaceCalls)
-		writeDispatches(w, flow.Trail.Dispatches)
-		writeBranches(w, flow)
-		writeCalls(w, "Async", dedupeCalls(flow.Trail.Async))
-		writeCalls(w, "Other Notable Calls", summarizeUnknown(flow.Trail.Unknown, operationCallsiteSymbols(flow)))
-		writeErrorCodes(w, flow.Errors.GRPCCodes)
 	}
-	return nil
+
+	interfaceCalls, branches, dispatches := decisionPointCounts(flow)
+	fmt.Fprintln(w, "- decision points:")
+	fmt.Fprintf(w, "  - interface calls: %d\n", interfaceCalls)
+	fmt.Fprintf(w, "  - branches: %d\n", branches)
+	fmt.Fprintf(w, "  - dispatches: %d\n\n", dispatches)
 }
 
-func writeFlowHeader(w io.Writer, flow model.APIFlow) error {
-	if _, err := fmt.Fprintf(w, "## %s\n\n", flow.Name); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "- kind: `%s`\n", flow.Kind); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "- handler: `%s` (%s:%d)\n", flow.Entrypoint.Symbol, flow.Entrypoint.File, flow.Entrypoint.Line); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "- request: `%s`\n", flow.Request.Type); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "- response: `%s`\n\n", flow.Response.Type); err != nil {
-		return err
-	}
-	return nil
+type layerOperationCount struct {
+	Name  string
+	Count int
 }
 
-func writeOperations(w io.Writer, title string, calls []model.CallRef, allCalls []model.CallRef) {
-	operations := summarizeOperations(calls, allCalls)
+func layerOperationCounts(flow model.APIFlow) []layerOperationCount {
+	allCalls := collectCalls(flow)
+	var counts []layerOperationCount
+	for _, layer := range collectLayerCalls(flow) {
+		count := len(sortedOperationSummaries(layer.Calls, allCalls))
+		if count == 0 {
+			continue
+		}
+		counts = append(counts, layerOperationCount{Name: layer.Name, Count: count})
+	}
+	return counts
+}
+
+func decisionPointCounts(flow model.APIFlow) (interfaceCalls int, branches int, dispatches int) {
+	interfaceCalls = len(summarizeInterfaceCalls(flow.Trail.InterfaceCalls))
+	branches = len(flow.Trail.Branches)
+	dispatches = len(flow.Trail.Dispatches)
+	return interfaceCalls, branches, dispatches
+}
+
+func writeLayerSummary(w io.Writer, flow model.APIFlow) {
+	allCalls := collectCalls(flow)
+	wrote := false
+	for _, layer := range collectLayerCalls(flow) {
+		if writeOperations(w, &wrote, layer.Name, layer.Calls, allCalls) {
+			continue
+		}
+	}
+	writeCalls(w, &wrote, "async", sortCalls(dedupeCalls(flow.Trail.Async)))
+	writeCalls(w, &wrote, "other", sortCalls(summarizeUnknown(flow.Trail.Unknown, operationCallsiteSymbols(flow))))
+}
+
+func writeOperations(w io.Writer, wrote *bool, title string, calls []model.CallRef, allCalls []model.CallRef) bool {
+	operations := sortedOperationSummaries(calls, allCalls)
 	if len(operations) == 0 {
-		return
+		return false
 	}
-	fmt.Fprintf(w, "### %s\n", title)
+	writeLayerSummaryHeading(w, wrote)
+	fmt.Fprintf(w, "#### %s\n", title)
 	for _, operation := range operations {
 		fmt.Fprintf(w, "- `%s`\n", operation.Symbol)
 		writeCalledFrom(w, operation.CalledFrom)
@@ -62,10 +99,19 @@ func writeOperations(w io.Writer, title string, calls []model.CallRef, allCalls 
 		writeRelatedCalls(w, operation.Related)
 	}
 	fmt.Fprintln(w)
+	return true
+}
+
+func writeLayerSummaryHeading(w io.Writer, wrote *bool) {
+	if *wrote {
+		return
+	}
+	fmt.Fprintln(w, "### layer summary")
+	*wrote = true
 }
 
 func writeCalledFrom(w io.Writer, calls []model.CallRef) {
-	calls = dedupeCalls(calls)
+	calls = sortCalls(dedupeCalls(calls))
 	if len(calls) == 0 {
 		return
 	}
@@ -89,6 +135,7 @@ func writeCalledFrom(w io.Writer, calls []model.CallRef) {
 }
 
 func writeRelatedCalls(w io.Writer, calls []model.CallRef) {
+	calls = sortCalls(dedupeCalls(calls))
 	if len(calls) == 0 {
 		return
 	}
@@ -103,62 +150,104 @@ func writeRelatedCalls(w io.Writer, calls []model.CallRef) {
 	}
 }
 
-func writeInterfaceCalls(w io.Writer, calls []model.InterfaceCallTrace) {
-	calls = summarizeInterfaceCalls(calls)
-	resolved, unresolved := splitInterfaceCalls(calls)
-	if len(resolved) == 0 && len(unresolved) == 0 {
+func writeCalls(w io.Writer, wrote *bool, title string, calls []model.CallRef) {
+	if len(calls) == 0 {
 		return
 	}
-	if len(resolved) > 0 {
-		fmt.Fprintln(w, "### Interface Calls")
+	writeLayerSummaryHeading(w, wrote)
+	fmt.Fprintf(w, "#### %s\n", title)
+	for _, call := range calls {
+		fmt.Fprintf(w, "- %s\n", callReference(call))
 	}
-	for _, call := range resolved {
-		writeInterfaceCallHeader(w, call)
-		if call.Interface != "" {
-			fmt.Fprintf(w, "  - interface: `%s`\n", call.Interface)
-		}
-		writeInterfaceImplementations(w, call.Implementations)
-	}
-	if len(resolved) > 0 {
-		fmt.Fprintln(w)
-	}
-	if len(unresolved) > 0 {
-		fmt.Fprintln(w, "### Unresolved Interface Calls")
-		for _, call := range unresolved {
-			writeInterfaceCallHeader(w, call)
-			if call.Interface != "" {
-				fmt.Fprintf(w, "  - interface: `%s`\n", call.Interface)
-			}
-		}
-		fmt.Fprintln(w)
-	}
+	fmt.Fprintln(w)
 }
 
-func writeInterfaceCallHeader(w io.Writer, trace model.InterfaceCallTrace) {
-	call := trace.Call
-	if call.File == "" {
-		fmt.Fprintf(w, "- `%s`\n", call.Symbol)
+func writeDecisionPoints(w io.Writer, flow model.APIFlow) {
+	hasInterfaceCalls := len(summarizeInterfaceCalls(flow.Trail.InterfaceCalls)) > 0
+	hasBranches := len(flow.Trail.Branches) > 0
+	hasDispatches := len(flow.Trail.Dispatches) > 0
+	if !hasInterfaceCalls && !hasBranches && !hasDispatches {
 		return
 	}
-	fmt.Fprintf(w, "- `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
+
+	fmt.Fprintln(w, "### decision points")
+	writeInterfaceCallsTable(w, flow.Trail.InterfaceCalls)
+	writeBranchesTable(w, flow.Trail.Branches)
+	writeDispatchesTable(w, flow.Trail.Dispatches)
 }
 
-func writeInterfaceImplementations(w io.Writer, implementations []model.ImplementationCandidate) {
-	if len(implementations) == 0 {
+func writeInterfaceCallsTable(w io.Writer, calls []model.InterfaceCallTrace) {
+	calls = sortedInterfaceCalls(summarizeInterfaceCalls(calls))
+	if len(calls) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "  - candidates:")
-	for _, implementation := range implementations {
-		call := implementation.Call
+
+	fmt.Fprintln(w, "#### interface calls")
+	fmt.Fprintln(w, "| call | interface | candidates | resolution |")
+	fmt.Fprintln(w, "| --- | --- | --- | --- |")
+	for _, call := range calls {
+		fmt.Fprintf(
+			w,
+			"| %s | %s | %s | %s |\n",
+			tableCell(callReference(call.Call)),
+			tableCell(inlineCode(call.Interface)),
+			tableCell(interfaceCandidatesCell(call.Implementations)),
+			tableCell(interfaceResolution(call.Implementations)),
+		)
+	}
+	fmt.Fprintln(w)
+}
+
+func sortedInterfaceCalls(calls []model.InterfaceCallTrace) []model.InterfaceCallTrace {
+	out := append([]model.InterfaceCallTrace(nil), calls...)
+	for i := range out {
+		out[i].Implementations = sortImplementationCandidates(out[i].Implementations)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Interface != out[j].Interface {
+			return out[i].Interface < out[j].Interface
+		}
+		return callLess(out[i].Call, out[j].Call)
+	})
+	return out
+}
+
+func interfaceCandidatesCell(candidates []model.ImplementationCandidate) string {
+	if len(candidates) == 0 {
+		return "-"
+	}
+	var parts []string
+	for _, candidate := range candidates {
 		status := "candidate"
-		if implementation.Expanded {
+		if candidate.Expanded {
 			status = "expanded"
 		}
-		if call.File == "" {
-			fmt.Fprintf(w, "    - `%s` %s\n", call.Symbol, status)
-			continue
+		parts = append(parts, fmt.Sprintf("%s %s", callReference(candidate.Call), status))
+	}
+	return strings.Join(parts, "<br>")
+}
+
+func interfaceResolution(candidates []model.ImplementationCandidate) string {
+	if len(candidates) == 0 {
+		return "unresolved"
+	}
+	expanded := 0
+	for _, candidate := range candidates {
+		if candidate.Expanded {
+			expanded++
 		}
-		fmt.Fprintf(w, "    - `%s` (%s:%d) %s\n", call.Symbol, call.File, call.Line, status)
+	}
+	switch {
+	case len(candidates) == 1 && expanded == 1:
+		return "single expanded"
+	case len(candidates) == 1:
+		return "single candidate"
+	case expanded == len(candidates):
+		return "multiple expanded"
+	case expanded == 0:
+		return "multiple candidates"
+	default:
+		return "partial"
 	}
 }
 
@@ -173,19 +262,6 @@ func summarizeInterfaceCalls(calls []model.InterfaceCallTrace) []model.Interface
 	return out
 }
 
-func splitInterfaceCalls(calls []model.InterfaceCallTrace) ([]model.InterfaceCallTrace, []model.InterfaceCallTrace) {
-	var resolved []model.InterfaceCallTrace
-	var unresolved []model.InterfaceCallTrace
-	for _, call := range calls {
-		if len(call.Implementations) == 0 {
-			unresolved = append(unresolved, call)
-			continue
-		}
-		resolved = append(resolved, call)
-	}
-	return resolved, unresolved
-}
-
 func hasOnlyInternalHelperImplementations(trace model.InterfaceCallTrace) bool {
 	if len(trace.Implementations) == 0 {
 		return false
@@ -198,148 +274,76 @@ func hasOnlyInternalHelperImplementations(trace model.InterfaceCallTrace) bool {
 	return true
 }
 
-func writeDispatches(w io.Writer, dispatches []model.DispatchTrace) {
-	if len(dispatches) == 0 {
+func writeBranchesTable(w io.Writer, branches []model.BranchTrace) {
+	if len(branches) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "### Dispatches")
-	for _, dispatch := range dispatches {
-		writeDispatchHeader(w, dispatch)
-		if dispatch.Interface != "" {
-			fmt.Fprintf(w, "  - interface: `%s`\n", dispatch.Interface)
-		}
-		for _, dispatchCase := range dispatch.Cases {
-			fmt.Fprintf(w, "  - %s\n", dispatchCaseTitle(dispatchCase))
-			writeDispatchCaseLayers(w, dispatchCase)
-			writeDispatchCaseUnknown(w, dispatchCase)
-		}
-	}
-	fmt.Fprintln(w)
-}
 
-func writeDispatchHeader(w io.Writer, dispatch model.DispatchTrace) {
-	call := dispatch.Call
-	if call.File == "" {
-		fmt.Fprintf(w, "- `%s` dispatched from `%s`\n", call.Symbol, dispatchLookupDisplay(dispatch))
-		return
-	}
-	fmt.Fprintf(w, "- `%s` dispatched from `%s` (%s:%d)\n", call.Symbol, dispatchLookupDisplay(dispatch), call.File, call.Line)
-}
-
-func dispatchLookupDisplay(dispatch model.DispatchTrace) string {
-	if dispatch.Key == "" {
-		return dispatch.Table
-	}
-	return dispatch.Table + "[" + dispatch.Key + "]"
-}
-
-func writeDispatchCaseLayers(w io.Writer, dispatchCase model.DispatchCase) {
-	allCalls := dispatchCaseCalls(dispatchCase)
-	for _, layer := range dispatchCase.Layers {
-		operations := summarizeOperations(layer.Calls, allCalls)
-		if len(operations) == 0 {
-			continue
-		}
-		if len(operations) == 1 {
-			fmt.Fprintf(w, "    - %s: `%s`\n", layer.Name, operations[0].Symbol)
-			continue
-		}
-		fmt.Fprintf(w, "    - %s:\n", layer.Name)
-		for _, operation := range operations {
-			fmt.Fprintf(w, "      - `%s`\n", operation.Symbol)
-		}
-	}
-}
-
-func writeDispatchCaseUnknown(w io.Writer, dispatchCase model.DispatchCase) {
-	unknown := summarizeUnknown(dispatchCase.Unknown, map[string]bool{})
-	if len(unknown) == 0 {
-		return
-	}
-	if len(unknown) == 1 {
-		fmt.Fprintf(w, "    - other: `%s`\n", unknown[0].Symbol)
-		return
-	}
-	fmt.Fprintln(w, "    - other:")
-	for _, call := range unknown {
-		fmt.Fprintf(w, "      - `%s`\n", call.Symbol)
-	}
-}
-
-func dispatchCaseCalls(dispatchCase model.DispatchCase) []model.CallRef {
-	var calls []model.CallRef
-	for _, layer := range dispatchCase.Layers {
-		calls = append(calls, layer.Calls...)
-	}
-	calls = append(calls, dispatchCase.Unknown...)
-	return calls
-}
-
-func dispatchCaseTitle(dispatchCase model.DispatchCase) string {
-	if len(dispatchCase.Labels) == 0 {
-		return "case"
-	}
-	return "case `" + strings.Join(dispatchCase.Labels, "`, `") + "`"
-}
-
-func writeBranches(w io.Writer, flow model.APIFlow) {
-	if len(flow.Trail.Branches) == 0 {
-		return
-	}
-	fmt.Fprintln(w, "### Branches")
-	for _, branch := range flow.Trail.Branches {
-		writeBranchHeader(w, branch)
+	fmt.Fprintln(w, "#### branches")
+	fmt.Fprintln(w, "| function | condition | case | calls |")
+	fmt.Fprintln(w, "| --- | --- | --- | --- |")
+	for _, branch := range branches {
 		for _, branchCase := range branch.Cases {
-			fmt.Fprintf(w, "  - %s\n", branchCaseTitle(branchCase))
-			writeBranchCaseLayers(w, branchCase)
-			writeBranchCaseUnknown(w, branchCase)
+			fmt.Fprintf(
+				w,
+				"| %s | %s | %s | %s |\n",
+				tableCell(branchFunctionCell(branch)),
+				tableCell(branchCondition(branch)),
+				tableCell(branchCaseTitle(branchCase)),
+				tableCell(branchCaseCallsCell(branch, branchCase)),
+			)
 		}
 	}
 	fmt.Fprintln(w)
 }
 
-func writeBranchHeader(w io.Writer, branch model.BranchTrace) {
-	fmt.Fprintf(w, "- `%s` %s", branch.Function, branchKindLabel(branch.Kind))
-	if branch.Expr != "" {
-		fmt.Fprintf(w, " `%s`", branch.Expr)
+func branchFunctionCell(branch model.BranchTrace) string {
+	call := callReference(model.CallRef{Symbol: branch.Function, File: branch.File, Line: branch.Line})
+	if branch.Kind == "" {
+		return call
 	}
-	if branch.File != "" {
-		fmt.Fprintf(w, " (%s:%d)", branch.File, branch.Line)
-	}
-	fmt.Fprintln(w)
+	return call
 }
 
-func writeBranchCaseLayers(w io.Writer, branchCase model.BranchCase) {
-	allCalls := branchCaseCalls(branchCase)
-	for _, layer := range branchCase.Layers {
-		operations := summarizeOperations(layer.Calls, allCalls)
-		if len(operations) == 0 {
-			continue
-		}
-		if len(operations) == 1 {
-			fmt.Fprintf(w, "    - %s: `%s`\n", layer.Name, operations[0].Symbol)
-			continue
-		}
-		fmt.Fprintf(w, "    - %s:\n", layer.Name)
-		for _, operation := range operations {
-			fmt.Fprintf(w, "      - `%s`\n", operation.Symbol)
-		}
+func branchCondition(branch model.BranchTrace) string {
+	condition := branchKindLabel(branch.Kind)
+	if branch.Expr == "" {
+		return condition
 	}
+	return condition + " " + inlineCode(branch.Expr)
 }
 
-func writeBranchCaseUnknown(w io.Writer, branchCase model.BranchCase) {
-	unknown := summarizeUnknown(branchCase.Unknown, map[string]bool{})
-	if len(unknown) == 0 {
-		return
+func branchCaseCallsCell(branch model.BranchTrace, branchCase model.BranchCase) string {
+	layers, unknown := directBranchCaseCalls(branch, branchCase)
+	return layerCallsCell(layers, unknown, layerCalls(layers, unknown))
+}
+
+func directBranchCaseCalls(branch model.BranchTrace, branchCase model.BranchCase) ([]model.LayerCalls, []model.CallRef) {
+	directSymbols := branchDirectSymbols(branch, branchCase)
+	layers := filterLayers(branchCase.Layers, func(call model.CallRef) bool {
+		return isBranchDirectCall(branch, directSymbols, call)
+	})
+	var unknown []model.CallRef
+	for _, call := range branchCase.Unknown {
+		if isBranchDirectCall(branch, directSymbols, call) {
+			unknown = append(unknown, call)
+		}
 	}
-	if len(unknown) == 1 {
-		fmt.Fprintf(w, "    - other: `%s`\n", unknown[0].Symbol)
-		return
+	return layers, dedupeCalls(unknown)
+}
+
+func branchDirectSymbols(branch model.BranchTrace, branchCase model.BranchCase) map[string]bool {
+	symbols := make(map[string]bool)
+	for _, call := range branchCaseCalls(branchCase) {
+		if call.Via == branch.Function || call.Via == "" {
+			symbols[call.Symbol] = true
+		}
 	}
-	fmt.Fprintln(w, "    - other:")
-	for _, call := range unknown {
-		fmt.Fprintf(w, "      - `%s`\n", call.Symbol)
-	}
+	return symbols
+}
+
+func isBranchDirectCall(branch model.BranchTrace, directSymbols map[string]bool, call model.CallRef) bool {
+	return call.Via == branch.Function || call.Via == "" || directSymbols[call.Via]
 }
 
 func branchCaseCalls(branchCase model.BranchCase) []model.CallRef {
@@ -367,31 +371,226 @@ func branchCaseTitle(branchCase model.BranchCase) string {
 	if len(branchCase.Labels) == 0 {
 		return "case"
 	}
-	return "case `" + strings.Join(branchCase.Labels, "`, `") + "`"
+	return "case " + inlineCodeList(branchCase.Labels)
 }
 
-func writeCalls(w io.Writer, title string, calls []model.CallRef) {
-	if len(calls) == 0 {
+func writeDispatchesTable(w io.Writer, dispatches []model.DispatchTrace) {
+	if len(dispatches) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "### %s\n", title)
-	for _, call := range calls {
-		if call.File == "" {
-			fmt.Fprintf(w, "- `%s`\n", call.Symbol)
+
+	fmt.Fprintln(w, "#### dispatches")
+	fmt.Fprintln(w, "| dispatch | case | calls |")
+	fmt.Fprintln(w, "| --- | --- | --- |")
+	for _, dispatch := range dispatches {
+		for _, dispatchCase := range dispatch.Cases {
+			fmt.Fprintf(
+				w,
+				"| %s | %s | %s |\n",
+				tableCell(dispatchCell(dispatch)),
+				tableCell(dispatchCaseTitle(dispatchCase)),
+				tableCell(dispatchCaseCallsCell(dispatchCase)),
+			)
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+func dispatchCell(dispatch model.DispatchTrace) string {
+	parts := []string{
+		callReference(dispatch.Call),
+		"from " + inlineCode(dispatchLookupDisplay(dispatch)),
+	}
+	if dispatch.Interface != "" {
+		parts = append(parts, "interface: "+inlineCode(dispatch.Interface))
+	}
+	return strings.Join(parts, "<br>")
+}
+
+func dispatchLookupDisplay(dispatch model.DispatchTrace) string {
+	if dispatch.Key == "" {
+		return dispatch.Table
+	}
+	return dispatch.Table + "[" + dispatch.Key + "]"
+}
+
+func dispatchCaseCallsCell(dispatchCase model.DispatchCase) string {
+	return layerCallsCell(dispatchCase.Layers, dispatchCase.Unknown, dispatchCaseCalls(dispatchCase))
+}
+
+func dispatchCaseCalls(dispatchCase model.DispatchCase) []model.CallRef {
+	var calls []model.CallRef
+	for _, layer := range dispatchCase.Layers {
+		calls = append(calls, layer.Calls...)
+	}
+	calls = append(calls, dispatchCase.Unknown...)
+	return calls
+}
+
+func dispatchCaseTitle(dispatchCase model.DispatchCase) string {
+	if len(dispatchCase.Labels) == 0 {
+		return "case"
+	}
+	return "case " + inlineCodeList(dispatchCase.Labels)
+}
+
+func layerCallsCell(layers []model.LayerCalls, unknown []model.CallRef, allCalls []model.CallRef) string {
+	var parts []string
+	for _, layer := range layers {
+		operations := sortedOperationSummaries(layer.Calls, allCalls)
+		if len(operations) == 0 {
 			continue
 		}
-		fmt.Fprintf(w, "- `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
+		parts = append(parts, fmt.Sprintf("%s: %s", layer.Name, operationNamesCell(operations)))
 	}
-	fmt.Fprintln(w)
+	unknownCalls := sortCalls(summarizeUnknown(unknown, map[string]bool{}))
+	if len(unknownCalls) > 0 {
+		parts = append(parts, fmt.Sprintf("other: %s", callNamesCell(unknownCalls)))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, "<br>")
 }
 
-func writeErrorCodes(w io.Writer, codes []string) {
-	if len(codes) == 0 {
-		return
+func filterLayers(layers []model.LayerCalls, keep func(model.CallRef) bool) []model.LayerCalls {
+	var out []model.LayerCalls
+	for _, layer := range layers {
+		var calls []model.CallRef
+		for _, call := range layer.Calls {
+			if keep(call) {
+				calls = append(calls, call)
+			}
+		}
+		if len(calls) == 0 {
+			continue
+		}
+		out = append(out, model.LayerCalls{Name: layer.Name, Calls: dedupeCalls(calls)})
 	}
-	fmt.Fprintln(w, "### Error Codes")
-	for _, code := range codes {
-		fmt.Fprintf(w, "- `%s`\n", code)
+	return out
+}
+
+func layerCalls(layers []model.LayerCalls, unknown []model.CallRef) []model.CallRef {
+	var calls []model.CallRef
+	for _, layer := range layers {
+		calls = append(calls, layer.Calls...)
 	}
-	fmt.Fprintln(w)
+	calls = append(calls, unknown...)
+	return calls
+}
+
+func operationNamesCell(operations []operationSummary) string {
+	var names []string
+	for _, operation := range operations {
+		names = append(names, inlineCode(operation.Symbol))
+	}
+	return strings.Join(names, ", ")
+}
+
+func callNamesCell(calls []model.CallRef) string {
+	var names []string
+	for _, call := range calls {
+		names = append(names, inlineCode(call.Symbol))
+	}
+	return strings.Join(names, ", ")
+}
+
+func sortedOperationSummaries(calls []model.CallRef, allCalls []model.CallRef) []operationSummary {
+	operations := summarizeOperations(calls, allCalls)
+	sort.SliceStable(operations, func(i, j int) bool {
+		left := operationAnchor(operations[i])
+		right := operationAnchor(operations[j])
+		if !sameCall(left, right) {
+			return callLess(left, right)
+		}
+		return operations[i].Symbol < operations[j].Symbol
+	})
+	return operations
+}
+
+func operationAnchor(operation operationSummary) model.CallRef {
+	calls := sortCalls(operation.CalledFrom)
+	if len(calls) > 0 {
+		return calls[0]
+	}
+	if operation.HasImplementation {
+		return operation.Implementation
+	}
+	return model.CallRef{Symbol: operation.Symbol}
+}
+
+func sortImplementationCandidates(candidates []model.ImplementationCandidate) []model.ImplementationCandidate {
+	out := append([]model.ImplementationCandidate(nil), candidates...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Expanded != out[j].Expanded {
+			return out[i].Expanded
+		}
+		return callLess(out[i].Call, out[j].Call)
+	})
+	return out
+}
+
+func sortCalls(calls []model.CallRef) []model.CallRef {
+	out := append([]model.CallRef(nil), calls...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return callLess(out[i], out[j])
+	})
+	return out
+}
+
+func callLess(left model.CallRef, right model.CallRef) bool {
+	if (left.File == "") != (right.File == "") {
+		return left.File != ""
+	}
+	if left.File != right.File {
+		return left.File < right.File
+	}
+	if left.Line != right.Line {
+		return left.Line < right.Line
+	}
+	if left.Symbol != right.Symbol {
+		return left.Symbol < right.Symbol
+	}
+	if left.Method != right.Method {
+		return left.Method < right.Method
+	}
+	if left.Receiver != right.Receiver {
+		return left.Receiver < right.Receiver
+	}
+	return left.Depth < right.Depth
+}
+
+func callReference(call model.CallRef) string {
+	if call.Symbol == "" {
+		return "-"
+	}
+	reference := inlineCode(call.Symbol)
+	if call.File == "" {
+		return reference
+	}
+	return fmt.Sprintf("%s (%s:%d)", reference, call.File, call.Line)
+}
+
+func inlineCodeList(values []string) string {
+	var out []string
+	for _, value := range values {
+		out = append(out, inlineCode(value))
+	}
+	return strings.Join(out, ", ")
+}
+
+func inlineCode(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return "`" + strings.ReplaceAll(value, "`", "\\`") + "`"
+}
+
+func tableCell(value string) string {
+	if value == "" {
+		return "-"
+	}
+	value = strings.ReplaceAll(value, "|", `\|`)
+	value = strings.ReplaceAll(value, "\n", "<br>")
+	return value
 }
