@@ -18,6 +18,7 @@ func WriteMarkdown(w io.Writer, flows []model.APIFlow) error {
 		for _, layer := range flow.Trail.Layers {
 			writeOperations(w, layer.Name, layer.Calls, allCalls)
 		}
+		writeInterfaceCalls(w, flow.Trail.InterfaceCalls)
 		writeBranches(w, flow.Trail.Branches)
 		writeCalls(w, "Async", dedupeCalls(flow.Trail.Async))
 		writeCalls(w, "Other Notable Calls", summarizeUnknown(flow.Trail.Unknown, operationCallsiteSymbols(flow)))
@@ -99,6 +100,80 @@ func writeRelatedCalls(w io.Writer, calls []model.CallRef) {
 	for _, call := range calls {
 		fmt.Fprintf(w, "    - `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
 	}
+}
+
+func writeInterfaceCalls(w io.Writer, calls []model.InterfaceCallTrace) {
+	calls = summarizeInterfaceCalls(calls)
+	if len(calls) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "### Interface Calls")
+	for _, call := range calls {
+		writeInterfaceCallHeader(w, call)
+		if call.Interface != "" {
+			fmt.Fprintf(w, "  - interface: `%s`\n", call.Interface)
+		}
+		writeInterfaceImplementations(w, call.Implementations)
+	}
+	fmt.Fprintln(w)
+}
+
+func writeInterfaceCallHeader(w io.Writer, trace model.InterfaceCallTrace) {
+	call := trace.Call
+	if call.File == "" {
+		fmt.Fprintf(w, "- `%s`\n", call.Symbol)
+		return
+	}
+	fmt.Fprintf(w, "- `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
+}
+
+func writeInterfaceImplementations(w io.Writer, implementations []model.ImplementationCandidate) {
+	if len(implementations) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "  - candidates:")
+	for _, implementation := range implementations {
+		call := implementation.Call
+		status := "candidate"
+		if implementation.Expanded {
+			status = "expanded"
+		}
+		if call.File == "" {
+			fmt.Fprintf(w, "    - `%s` %s\n", call.Symbol, status)
+			continue
+		}
+		fmt.Fprintf(w, "    - `%s` (%s:%d) %s\n", call.Symbol, call.File, call.Line, status)
+	}
+}
+
+func summarizeInterfaceCalls(calls []model.InterfaceCallTrace) []model.InterfaceCallTrace {
+	var out []model.InterfaceCallTrace
+	for _, call := range calls {
+		if isLowSignalInterfaceCall(call) {
+			continue
+		}
+		out = append(out, call)
+	}
+	return out
+}
+
+func isLowSignalInterfaceCall(trace model.InterfaceCallTrace) bool {
+	method := strings.ToLower(trace.Call.Method)
+	if method == "now" || strings.Contains(method, "timestamp") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(trace.Interface), "clock") {
+		return true
+	}
+	if len(trace.Implementations) == 0 {
+		return false
+	}
+	for _, implementation := range trace.Implementations {
+		if !isInternalHelperCall(implementation.Call) {
+			return false
+		}
+	}
+	return true
 }
 
 func writeBranches(w io.Writer, branches []model.BranchTrace) {

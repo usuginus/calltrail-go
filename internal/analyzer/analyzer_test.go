@@ -68,8 +68,46 @@ func TestAnalyzeDepthTwoFollowsInterfaceImplementationCandidate(t *testing.T) {
 	if repositories[0].Via != "fooUsecase.GetFoo" {
 		t.Fatalf("repository via = %q", repositories[0].Via)
 	}
+	if len(flow.Trail.InterfaceCalls) != 1 || len(flow.Trail.InterfaceCalls[0].Implementations) != 1 {
+		t.Fatalf("interface calls = %#v, want one implementation", flow.Trail.InterfaceCalls)
+	}
+	if !flow.Trail.InterfaceCalls[0].Implementations[0].Expanded {
+		t.Fatal("interface implementation expanded = false, want true")
+	}
 	if hasCall(flow.Trail.Unknown, "stdstrings.TrimSpace") {
 		t.Fatal("standard library alias call was not ignored")
+	}
+}
+
+func TestAnalyzeRecordsInterfaceCallCandidates(t *testing.T) {
+	flows, err := Analyze([]string{"testdata/simple"}, Options{Depth: 1})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	if len(flow.Trail.InterfaceCalls) != 1 {
+		t.Fatalf("interface calls = %#v, want 1", flow.Trail.InterfaceCalls)
+	}
+	trace := flow.Trail.InterfaceCalls[0]
+	if trace.Call.Symbol != "s.fooUsecase.GetFoo" {
+		t.Fatalf("interface call symbol = %q, want s.fooUsecase.GetFoo", trace.Call.Symbol)
+	}
+	if trace.Interface != "FooUsecase" {
+		t.Fatalf("interface = %q, want FooUsecase", trace.Interface)
+	}
+	if len(trace.Implementations) != 1 {
+		t.Fatalf("implementations = %#v, want 1", trace.Implementations)
+	}
+	implementation := trace.Implementations[0]
+	if implementation.Call.Symbol != "fooUsecase.GetFoo" {
+		t.Fatalf("implementation = %q, want fooUsecase.GetFoo", implementation.Call.Symbol)
+	}
+	if implementation.Expanded {
+		t.Fatal("implementation expanded at depth 1, want false")
 	}
 }
 

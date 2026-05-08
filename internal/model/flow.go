@@ -23,11 +23,12 @@ type TypeRef struct {
 }
 
 type Trail struct {
-	Layers     []LayerCalls  `json:"layers,omitempty"`
-	Branches   []BranchTrace `json:"branches,omitempty"`
-	Async      []CallRef     `json:"async,omitempty"`
-	Unknown    []CallRef     `json:"unknown,omitempty"`
-	layerOrder []string
+	Layers         []LayerCalls         `json:"layers,omitempty"`
+	InterfaceCalls []InterfaceCallTrace `json:"interface_calls,omitempty"`
+	Branches       []BranchTrace        `json:"branches,omitempty"`
+	Async          []CallRef            `json:"async,omitempty"`
+	Unknown        []CallRef            `json:"unknown,omitempty"`
+	layerOrder     []string
 }
 
 type LayerCalls struct {
@@ -50,6 +51,17 @@ type BranchCase struct {
 	Default bool         `json:"default,omitempty"`
 	Layers  []LayerCalls `json:"layers,omitempty"`
 	Unknown []CallRef    `json:"unknown,omitempty"`
+}
+
+type InterfaceCallTrace struct {
+	Call            CallRef                   `json:"call"`
+	Interface       string                    `json:"interface"`
+	Implementations []ImplementationCandidate `json:"implementations,omitempty"`
+}
+
+type ImplementationCandidate struct {
+	Call     CallRef `json:"call"`
+	Expanded bool    `json:"expanded"`
 }
 
 type CallRef struct {

@@ -97,6 +97,7 @@ For each handler, it extracts:
 - handler symbol, file, and line
 - request and response types
 - downstream calls grouped by configured layers, plus async and notable calls
+- interface-typed calls and the implementation candidates inferred for them
 - branch-specific calls for `switch` and `type switch` statements
 - gRPC status codes returned via `status.Error` and `status.Errorf`
 
@@ -154,6 +155,12 @@ stays readable.
   - called from: `u.repositories.Foo.FindFoo` (internal/usecase/foo.go:24)
   - implementation: internal/repository/foo_repository.go:30
 
+### Interface Calls
+- `s.fooUsecase.GetFoo` (internal/adapter/grpc/foo.go:18)
+  - interface: `FooUsecase`
+  - candidates:
+    - `fooUsecase.GetFoo` (internal/usecase/foo.go:20) expanded
+
 ### Branches
 - `fooUsecase.GetFoo` switch `req.Kind` (internal/usecase/foo.go:36)
   - case `"cached"`
@@ -163,7 +170,8 @@ stays readable.
 ```
 
 JSON output keeps the raw trail data, including free-form layer names under
-`trail.layers` and branch details under `trail.branches`:
+`trail.layers`, interface candidate details under `trail.interface_calls`, and
+branch details under `trail.branches`:
 
 ```sh
 calltrail-go ./... --rpc GetFoo --format json

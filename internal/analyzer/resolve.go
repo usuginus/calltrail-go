@@ -17,6 +17,11 @@ type scopeInfo struct {
 	structFields   map[string]map[string]string
 }
 
+type resolvedCall struct {
+	interfaceType string
+	candidates    []functionInfo
+}
+
 func newScope(fn *ast.FuncDecl, index projectIndex, receiverType string, receiverVar string, receiverFields map[string]string) scopeInfo {
 	scope := scopeInfo{
 		receiverType:   receiverType,
@@ -29,6 +34,10 @@ func newScope(fn *ast.FuncDecl, index projectIndex, receiverType string, receive
 }
 
 func resolveCandidates(ref model.CallRef, scope scopeInfo, index projectIndex, ruleSet rules.RuleSet) []functionInfo {
+	return resolveCall(ref, scope, index, ruleSet).candidates
+}
+
+func resolveCall(ref model.CallRef, scope scopeInfo, index projectIndex, ruleSet rules.RuleSet) resolvedCall {
 	resolvedType := resolveReceiverType(ref.Receiver, scope)
 	fieldType := baseType(resolvedType)
 	fieldTypeIsInterface := fieldType != "" && len(index.interfaces[fieldType]) > 0
@@ -37,7 +46,7 @@ func resolveCandidates(ref model.CallRef, scope scopeInfo, index projectIndex, r
 	}
 	if fieldTypeIsInterface {
 		if methods := index.interfaces[fieldType]; len(methods) > 0 && !methods[ref.Method] {
-			return nil
+			return resolvedCall{interfaceType: fieldType}
 		}
 	}
 
@@ -68,7 +77,13 @@ func resolveCandidates(ref model.CallRef, scope scopeInfo, index projectIndex, r
 		}
 		candidates = append(candidates, candidate)
 	}
-	return candidates
+	out := resolvedCall{
+		candidates: candidates,
+	}
+	if fieldTypeIsInterface {
+		out.interfaceType = fieldType
+	}
+	return out
 }
 
 func implementsInterface(receiverType string, interfaceType string, index projectIndex) bool {
