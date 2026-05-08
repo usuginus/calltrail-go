@@ -165,8 +165,11 @@ func summarizeUnknown(calls []model.CallRef, operationCallsites map[string]bool)
 func isLowSignalUnknown(call model.CallRef) bool {
 	symbol := strings.ToLower(call.Symbol)
 	receiver := strings.ToLower(call.Receiver)
+	method := strings.ToLower(call.Method)
 	return strings.Contains(symbol, "log") ||
 		strings.Contains(symbol, "zap") ||
+		method == "now" ||
+		strings.Contains(method, "timestamp") ||
 		receiver == "tok" ||
 		call.Method == "String"
 }

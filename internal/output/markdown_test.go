@@ -215,6 +215,97 @@ func TestWriteMarkdownIncludesBranchSummary(t *testing.T) {
 	}
 }
 
+func TestWriteMarkdownIncludesInterfaceCallSummary(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name: "GetFoo",
+			Kind: "grpc",
+			Entrypoint: model.Entrypoint{
+				Symbol: "Server.GetFoo",
+				File:   "handler.go",
+				Line:   10,
+			},
+			Request:  model.TypeRef{Type: "*pb.GetFooRequest"},
+			Response: model.TypeRef{Type: "*pb.GetFooResponse"},
+			Trail: model.Trail{
+				InterfaceCalls: []model.InterfaceCallTrace{
+					{
+						Call:      model.CallRef{Symbol: "s.fooUsecase.GetFoo", File: "handler.go", Line: 12},
+						Interface: "FooUsecase",
+						Implementations: []model.ImplementationCandidate{
+							{
+								Call:     model.CallRef{Symbol: "fooUsecase.GetFoo", File: "usecase.go", Line: 20},
+								Expanded: true,
+							},
+							{
+								Call: model.CallRef{Symbol: "otherFooUsecase.GetFoo", File: "other_usecase.go", Line: 18},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"### Interface Calls\n- `s.fooUsecase.GetFoo` (handler.go:12)",
+		"  - interface: `FooUsecase`",
+		"    - `fooUsecase.GetFoo` (usecase.go:20) expanded",
+		"    - `otherFooUsecase.GetFoo` (other_usecase.go:18) candidate",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteMarkdownOmitsLowSignalInterfaceCalls(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name:       "GetFoo",
+			Kind:       "grpc",
+			Entrypoint: model.Entrypoint{Symbol: "Server.GetFoo", File: "handler.go", Line: 10},
+			Request:    model.TypeRef{Type: "*pb.GetFooRequest"},
+			Response:   model.TypeRef{Type: "*pb.GetFooResponse"},
+			Trail: model.Trail{
+				InterfaceCalls: []model.InterfaceCallTrace{
+					{
+						Call:      model.CallRef{Symbol: "u.clock.Now", Method: "Now", File: "usecase.go", Line: 12},
+						Interface: "Clock",
+						Implementations: []model.ImplementationCandidate{
+							{Call: model.CallRef{Symbol: "systemClock.Now", Method: "Now", File: "clock.go", Line: 8, Depth: 2, Via: "u.clock.Now"}, Expanded: true},
+						},
+					},
+					{
+						Call:      model.CallRef{Symbol: "s.fooUsecase.GetFoo", Method: "GetFoo", File: "handler.go", Line: 14},
+						Interface: "FooUsecase",
+						Implementations: []model.ImplementationCandidate{
+							{Call: model.CallRef{Symbol: "fooUsecase.GetFoo", Method: "GetFoo", File: "usecase.go", Line: 20, Depth: 2, Via: "s.fooUsecase.GetFoo"}, Expanded: true},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	if strings.Contains(got, "u.clock.Now") || strings.Contains(got, "systemClock.Now") {
+		t.Fatalf("markdown output includes low-signal clock interface call:\n%s", got)
+	}
+	if !strings.Contains(got, "s.fooUsecase.GetFoo") {
+		t.Fatalf("markdown output omitted useful interface call:\n%s", got)
+	}
+}
+
 func TestWriteMarkdownDoesNotCollapseAmbiguousImplementations(t *testing.T) {
 	var buf bytes.Buffer
 	err := WriteMarkdown(&buf, []model.APIFlow{

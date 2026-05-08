@@ -40,8 +40,14 @@ func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index
 			return false
 		case *ast.CallExpr:
 			ref, ok := recordCall(fset, source.displayPath, &flow, n, scope, index, 1, "", opts.Rules, source.stdlibPackageAliases)
-			if ok && opts.Depth > 1 {
-				for _, candidate := range resolveCandidates(ref, scope, index, opts.Rules) {
+			if ok {
+				candidateDepth := 2
+				resolved := resolveCall(ref, scope, index, opts.Rules)
+				recordInterfaceCall(fset, &flow, ref, resolved, candidateDepth, opts.Depth)
+				if opts.Depth <= 1 {
+					return true
+				}
+				for _, candidate := range resolved.candidates {
 					recordImplementation(fset, &flow, candidate, ref.Symbol, 2, opts.Rules)
 					traceFunctionCalls(fset, &flow, candidate, index, 2, implementationSymbol(candidate), opts.Depth, opts.Rules)
 				}
@@ -85,11 +91,16 @@ func traceFunctionCalls(
 			return false
 		case *ast.CallExpr:
 			ref, added := recordCall(fset, info.file, flow, n, scope, index, currentDepth, via, ruleSet, info.stdlibPackageAliases)
-			if !added || currentDepth >= maxDepth {
+			if !added {
 				return true
 			}
-			for _, candidate := range resolveCandidates(ref, scope, index, ruleSet) {
-				candidateDepth := currentDepth + 1
+			candidateDepth := currentDepth + 1
+			resolved := resolveCall(ref, scope, index, ruleSet)
+			recordInterfaceCall(fset, flow, ref, resolved, candidateDepth, maxDepth)
+			if currentDepth >= maxDepth {
+				return true
+			}
+			for _, candidate := range resolved.candidates {
 				recordImplementation(fset, flow, candidate, ref.Symbol, candidateDepth, ruleSet)
 				if candidateDepth < maxDepth {
 					traceFunctionCalls(fset, flow, candidate, index, candidateDepth, implementationSymbol(candidate), maxDepth, ruleSet)
@@ -130,8 +141,13 @@ func recordCall(
 }
 
 func recordImplementation(fset *token.FileSet, flow *model.APIFlow, info functionInfo, via string, depth int, ruleSet rules.RuleSet) {
+	ref := implementationRef(fset, info, via, depth)
+	appendCall(flow, ref, classifyByFile(ref, info.file, ruleSet.Layers))
+}
+
+func implementationRef(fset *token.FileSet, info functionInfo, via string, depth int) model.CallRef {
 	pos := fset.Position(info.fn.Pos())
-	ref := model.CallRef{
+	return model.CallRef{
 		Symbol:   implementationSymbol(info),
 		Receiver: info.receiverType,
 		Method:   info.fn.Name.Name,
@@ -140,7 +156,6 @@ func recordImplementation(fset *token.FileSet, flow *model.APIFlow, info functio
 		Depth:    depth,
 		Via:      via,
 	}
-	appendCall(flow, ref, classifyByFile(ref, info.file, ruleSet.Layers))
 }
 
 func appendCall(flow *model.APIFlow, ref model.CallRef, layer string) {

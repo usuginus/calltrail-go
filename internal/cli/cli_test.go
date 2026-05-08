@@ -96,6 +96,16 @@ func TestRunJSONOutputsStructuredLayers(t *testing.T) {
 	if got := flows[0].Trail.Layers[0].Name; got != "usecase" {
 		t.Fatalf("first layer = %q, want usecase", got)
 	}
+	interfaceCalls := flows[0].Trail.InterfaceCalls
+	if len(interfaceCalls) != 1 {
+		t.Fatalf("interface calls = %#v, want 1", interfaceCalls)
+	}
+	if interfaceCalls[0].Interface != "FooUsecase" {
+		t.Fatalf("interface = %q, want FooUsecase", interfaceCalls[0].Interface)
+	}
+	if got := interfaceCalls[0].Implementations[0].Call.Symbol; got != "fooUsecase.GetFoo" {
+		t.Fatalf("implementation = %q, want fooUsecase.GetFoo", got)
+	}
 }
 
 func TestRunJSONOutputsBranchDetails(t *testing.T) {
