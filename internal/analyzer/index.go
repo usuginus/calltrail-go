@@ -23,9 +23,10 @@ type projectIndex struct {
 	interfaces               map[string]map[string]bool
 	implementationAssertions map[string]map[string]bool
 	structFields             map[string]map[string]string
+	dispatchTables           map[string]dispatchTableInfo
 }
 
-func buildProjectIndex(sources []parsedSource) projectIndex {
+func buildProjectIndex(fset *token.FileSet, sources []parsedSource) projectIndex {
 	index := projectIndex{
 		functionsByName:          make(map[string][]functionInfo),
 		methodsByName:            make(map[string][]functionInfo),
@@ -33,6 +34,7 @@ func buildProjectIndex(sources []parsedSource) projectIndex {
 		interfaces:               make(map[string]map[string]bool),
 		implementationAssertions: make(map[string]map[string]bool),
 		structFields:             make(map[string]map[string]string),
+		dispatchTables:           make(map[string]dispatchTableInfo),
 	}
 	for _, source := range sources {
 		collectInterfaces(source.file, index.interfaces)
@@ -65,6 +67,9 @@ func buildProjectIndex(sources []parsedSource) projectIndex {
 			}
 			index.methodsByReceiver[info.receiverType][fn.Name.Name] = true
 		}
+	}
+	for _, source := range sources {
+		collectDispatchTables(fset, source.file, &index)
 	}
 	return index
 }

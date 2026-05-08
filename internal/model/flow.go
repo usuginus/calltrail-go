@@ -25,6 +25,7 @@ type TypeRef struct {
 type Trail struct {
 	Layers         []LayerCalls         `json:"layers,omitempty"`
 	InterfaceCalls []InterfaceCallTrace `json:"interface_calls,omitempty"`
+	Dispatches     []DispatchTrace      `json:"dispatches,omitempty"`
 	Branches       []BranchTrace        `json:"branches,omitempty"`
 	Async          []CallRef            `json:"async,omitempty"`
 	Unknown        []CallRef            `json:"unknown,omitempty"`
@@ -49,6 +50,20 @@ type BranchTrace struct {
 type BranchCase struct {
 	Labels  []string     `json:"labels,omitempty"`
 	Default bool         `json:"default,omitempty"`
+	Layers  []LayerCalls `json:"layers,omitempty"`
+	Unknown []CallRef    `json:"unknown,omitempty"`
+}
+
+type DispatchTrace struct {
+	Table     string         `json:"table"`
+	Key       string         `json:"key,omitempty"`
+	Call      CallRef        `json:"call"`
+	Interface string         `json:"interface,omitempty"`
+	Cases     []DispatchCase `json:"cases,omitempty"`
+}
+
+type DispatchCase struct {
+	Labels  []string     `json:"labels,omitempty"`
 	Layers  []LayerCalls `json:"layers,omitempty"`
 	Unknown []CallRef    `json:"unknown,omitempty"`
 }
@@ -107,6 +122,14 @@ func (c *BranchCase) AppendLayerCall(name string, call CallRef, layerOrder []str
 	appendLayerCall(&c.Layers, name, call, layerOrder)
 }
 
+func (c *DispatchCase) AppendLayerCall(name string, call CallRef, layerOrder []string) {
+	if name == "" {
+		c.Unknown = append(c.Unknown, call)
+		return
+	}
+	appendLayerCall(&c.Layers, name, call, layerOrder)
+}
+
 func (t Trail) LayerCalls(name string) []CallRef {
 	for _, layer := range t.Layers {
 		if layer.Name == name {
@@ -117,6 +140,15 @@ func (t Trail) LayerCalls(name string) []CallRef {
 }
 
 func (c BranchCase) LayerCalls(name string) []CallRef {
+	for _, layer := range c.Layers {
+		if layer.Name == name {
+			return layer.Calls
+		}
+	}
+	return nil
+}
+
+func (c DispatchCase) LayerCalls(name string) []CallRef {
 	for _, layer := range c.Layers {
 		if layer.Name == name {
 			return layer.Calls

@@ -136,7 +136,7 @@ func traceFunctionCallsForBranchCase(
 	if currentDepth > maxDepth {
 		return
 	}
-	scope := newScope(info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
+	scope := newScope(fset, info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
 	ast.Inspect(info.fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt:
@@ -208,6 +208,7 @@ func traceCaseCallsForFlow(
 				if !added || depth >= maxDepth {
 					return true
 				}
+				recordDispatchCall(fset, flow, ref, scope, index, depth+1, maxDepth, ruleSet)
 				for _, candidate := range resolveCandidates(ref, scope, index, ruleSet) {
 					candidateDepth := depth + 1
 					recordImplementation(fset, flow, candidate, ref.Symbol, candidateDepth, ruleSet)

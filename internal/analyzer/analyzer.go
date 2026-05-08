@@ -28,7 +28,7 @@ func Analyze(paths []string, opts Options) ([]model.APIFlow, error) {
 		return nil, err
 	}
 
-	index := buildProjectIndex(sources)
+	index := buildProjectIndex(fset, sources)
 	var flows []model.APIFlow
 	for _, source := range sources {
 		for _, decl := range source.file.Decls {

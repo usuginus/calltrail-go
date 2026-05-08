@@ -310,6 +310,63 @@ func TestAnalyzeBranchDispatchExample(t *testing.T) {
 	}
 }
 
+func TestAnalyzeMapDispatchExample(t *testing.T) {
+	ruleSet, err := rules.Load("../../examples/map-dispatch/.calltrail.yaml")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	flows, err := Analyze([]string{"../../examples/map-dispatch"}, Options{
+		Depth: 4,
+		Rules: ruleSet,
+	})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	if flow.Name != "ProcessDocument" {
+		t.Fatalf("flow.Name = %q, want ProcessDocument", flow.Name)
+	}
+	dispatch := findDispatch(flow.Trail.Dispatches, "processor.Process", "a.processors", "cmd.Kind")
+	if dispatch == nil {
+		t.Fatalf("dispatches = %#v, want processor.Process from a.processors[cmd.Kind]", flow.Trail.Dispatches)
+	}
+	if dispatch.Interface != "DocumentProcessor" {
+		t.Fatalf("dispatch interface = %q, want DocumentProcessor", dispatch.Interface)
+	}
+
+	markdownCase := findDispatchCase(dispatch.Cases, "KindMarkdown")
+	if markdownCase == nil {
+		t.Fatalf("KindMarkdown case not found: %#v", dispatch.Cases)
+	}
+	for layer, symbol := range map[string]string{
+		"application": "markdownProcessor.Process",
+		"domain":      "documentPolicy.ValidateMarkdown",
+		"persistence": "documentStore.SaveMarkdown",
+	} {
+		if !hasCall(markdownCase.LayerCalls(layer), symbol) {
+			t.Fatalf("KindMarkdown %s layer = %#v, want %s", layer, markdownCase.LayerCalls(layer), symbol)
+		}
+	}
+
+	imageCase := findDispatchCase(dispatch.Cases, "KindImage")
+	if imageCase == nil {
+		t.Fatalf("KindImage case not found: %#v", dispatch.Cases)
+	}
+	for layer, symbol := range map[string]string{
+		"application":     "imageProcessor.Process",
+		"domain":          "documentPolicy.ValidateImage",
+		"external_client": "previewClient.RenderImage",
+	} {
+		if !hasCall(imageCase.LayerCalls(layer), symbol) {
+			t.Fatalf("KindImage %s layer = %#v, want %s", layer, imageCase.LayerCalls(layer), symbol)
+		}
+	}
+}
+
 func TestClassifyUsesReceiverTypeBeforeCurrentFilePath(t *testing.T) {
 	ruleSet, err := rules.Load("")
 	if err != nil {
@@ -384,6 +441,26 @@ func findDefaultCase(cases []model.BranchCase) *model.BranchCase {
 	for i := range cases {
 		if cases[i].Default {
 			return &cases[i]
+		}
+	}
+	return nil
+}
+
+func findDispatch(dispatches []model.DispatchTrace, symbol string, table string, key string) *model.DispatchTrace {
+	for i := range dispatches {
+		if dispatches[i].Call.Symbol == symbol && dispatches[i].Table == table && dispatches[i].Key == key {
+			return &dispatches[i]
+		}
+	}
+	return nil
+}
+
+func findDispatchCase(cases []model.DispatchCase, label string) *model.DispatchCase {
+	for i := range cases {
+		for _, got := range cases[i].Labels {
+			if got == label {
+				return &cases[i]
+			}
 		}
 	}
 	return nil

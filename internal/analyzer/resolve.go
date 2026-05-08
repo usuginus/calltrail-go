@@ -10,11 +10,12 @@ import (
 )
 
 type scopeInfo struct {
-	receiverType   string
-	receiverVar    string
-	receiverFields map[string]string
-	localTypes     map[string]string
-	structFields   map[string]map[string]string
+	receiverType    string
+	receiverVar     string
+	receiverFields  map[string]string
+	localTypes      map[string]string
+	localDispatches map[string]dispatchLookupInfo
+	structFields    map[string]map[string]string
 }
 
 type resolvedCall struct {
@@ -22,7 +23,7 @@ type resolvedCall struct {
 	candidates    []functionInfo
 }
 
-func newScope(fn *ast.FuncDecl, index projectIndex, receiverType string, receiverVar string, receiverFields map[string]string) scopeInfo {
+func newScope(fset *token.FileSet, fn *ast.FuncDecl, index projectIndex, receiverType string, receiverVar string, receiverFields map[string]string) scopeInfo {
 	scope := scopeInfo{
 		receiverType:   receiverType,
 		receiverVar:    receiverVar,
@@ -30,6 +31,7 @@ func newScope(fn *ast.FuncDecl, index projectIndex, receiverType string, receive
 		structFields:   index.structFields,
 	}
 	scope.localTypes = collectLocalTypes(fn.Body, index, scope)
+	scope.localDispatches = collectLocalDispatches(fset, fn.Body, index, scope)
 	return scope
 }
 
