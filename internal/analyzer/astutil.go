@@ -1,7 +1,10 @@
 package analyzer
 
 import (
+	"bytes"
 	"go/ast"
+	"go/printer"
+	"go/token"
 	"strings"
 )
 
@@ -51,6 +54,17 @@ func typeString(expr ast.Expr) string {
 	default:
 		return ""
 	}
+}
+
+func nodeString(fset *token.FileSet, node any) string {
+	if node == nil {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := printer.Fprint(&buf, fset, node); err != nil {
+		return ""
+	}
+	return buf.String()
 }
 
 func unique(values []string) []string {

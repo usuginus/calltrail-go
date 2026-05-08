@@ -3,6 +3,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/usuginus/calltrail-go/internal/model"
 )
@@ -17,6 +18,7 @@ func WriteMarkdown(w io.Writer, flows []model.APIFlow) error {
 		for _, layer := range flow.Trail.Layers {
 			writeOperations(w, layer.Name, layer.Calls, allCalls)
 		}
+		writeBranches(w, flow.Trail.Branches)
 		writeCalls(w, "Async", dedupeCalls(flow.Trail.Async))
 		writeCalls(w, "Other Notable Calls", summarizeUnknown(flow.Trail.Unknown, operationCallsiteSymbols(flow)))
 		writeErrorCodes(w, flow.Errors.GRPCCodes)
@@ -97,6 +99,94 @@ func writeRelatedCalls(w io.Writer, calls []model.CallRef) {
 	for _, call := range calls {
 		fmt.Fprintf(w, "    - `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
 	}
+}
+
+func writeBranches(w io.Writer, branches []model.BranchTrace) {
+	if len(branches) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "### Branches")
+	for _, branch := range branches {
+		writeBranchHeader(w, branch)
+		for _, branchCase := range branch.Cases {
+			fmt.Fprintf(w, "  - %s\n", branchCaseTitle(branchCase))
+			writeBranchCaseLayers(w, branchCase)
+			writeBranchCaseUnknown(w, branchCase)
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+func writeBranchHeader(w io.Writer, branch model.BranchTrace) {
+	fmt.Fprintf(w, "- `%s` %s", branch.Function, branchKindLabel(branch.Kind))
+	if branch.Expr != "" {
+		fmt.Fprintf(w, " `%s`", branch.Expr)
+	}
+	if branch.File != "" {
+		fmt.Fprintf(w, " (%s:%d)", branch.File, branch.Line)
+	}
+	fmt.Fprintln(w)
+}
+
+func writeBranchCaseLayers(w io.Writer, branchCase model.BranchCase) {
+	allCalls := branchCaseCalls(branchCase)
+	for _, layer := range branchCase.Layers {
+		operations := summarizeOperations(layer.Calls, allCalls)
+		if len(operations) == 0 {
+			continue
+		}
+		if len(operations) == 1 {
+			fmt.Fprintf(w, "    - %s: `%s`\n", layer.Name, operations[0].Symbol)
+			continue
+		}
+		fmt.Fprintf(w, "    - %s:\n", layer.Name)
+		for _, operation := range operations {
+			fmt.Fprintf(w, "      - `%s`\n", operation.Symbol)
+		}
+	}
+}
+
+func writeBranchCaseUnknown(w io.Writer, branchCase model.BranchCase) {
+	unknown := summarizeUnknown(branchCase.Unknown, map[string]bool{})
+	if len(unknown) == 0 {
+		return
+	}
+	if len(unknown) == 1 {
+		fmt.Fprintf(w, "    - other: `%s`\n", unknown[0].Symbol)
+		return
+	}
+	fmt.Fprintln(w, "    - other:")
+	for _, call := range unknown {
+		fmt.Fprintf(w, "      - `%s`\n", call.Symbol)
+	}
+}
+
+func branchCaseCalls(branchCase model.BranchCase) []model.CallRef {
+	var calls []model.CallRef
+	for _, layer := range branchCase.Layers {
+		calls = append(calls, layer.Calls...)
+	}
+	calls = append(calls, branchCase.Unknown...)
+	return calls
+}
+
+func branchKindLabel(kind string) string {
+	switch kind {
+	case "type_switch":
+		return "type switch"
+	default:
+		return "switch"
+	}
+}
+
+func branchCaseTitle(branchCase model.BranchCase) string {
+	if branchCase.Default {
+		return "default"
+	}
+	if len(branchCase.Labels) == 0 {
+		return "case"
+	}
+	return "case `" + strings.Join(branchCase.Labels, "`, `") + "`"
 }
 
 func writeCalls(w io.Writer, title string, calls []model.CallRef) {
