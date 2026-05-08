@@ -18,17 +18,15 @@ type operationSummary struct {
 
 func collectCalls(flow model.APIFlow) []model.CallRef {
 	var calls []model.CallRef
-	calls = append(calls, flow.Trail.Usecases...)
-	calls = append(calls, flow.Trail.Services...)
-	calls = append(calls, flow.Trail.Repositories...)
-	calls = append(calls, flow.Trail.ExternalClients...)
-	calls = append(calls, flow.Trail.Converters...)
+	for _, layer := range flow.Trail.Layers {
+		calls = append(calls, layer.Calls...)
+	}
 	calls = append(calls, flow.Trail.Async...)
 	calls = append(calls, flow.Trail.Unknown...)
 	return calls
 }
 
-func summarizeOperations(calls []model.CallRef, allCalls []model.CallRef, repositoryOnly bool) []operationSummary {
+func summarizeOperations(calls []model.CallRef, allCalls []model.CallRef) []operationSummary {
 	childrenByVia := make(map[string][]model.CallRef)
 	callSymbols := make(map[string]bool)
 	for _, call := range calls {
@@ -45,7 +43,7 @@ func summarizeOperations(calls []model.CallRef, allCalls []model.CallRef, reposi
 		if call.Via != "" && callSymbols[call.Via] {
 			continue
 		}
-		operation, ok := buildOperationSummary(call, childrenByVia[call.Symbol], firstCallBySymbol, repositoryOnly)
+		operation, ok := buildOperationSummary(call, childrenByVia[call.Symbol], firstCallBySymbol)
 		if !ok {
 			continue
 		}
@@ -68,7 +66,6 @@ func buildOperationSummary(
 	call model.CallRef,
 	children []model.CallRef,
 	firstCallBySymbol map[string]model.CallRef,
-	repositoryOnly bool,
 ) (operationSummary, bool) {
 	implementation, hasImplementation := sameOperationChild(call, children)
 	switch {
@@ -80,7 +77,7 @@ func buildOperationSummary(
 			CalledFrom:        []model.CallRef{call},
 			Related:           relatedInternalCalls(children, implementation),
 		}
-		return operation, keepOperation(operation, repositoryOnly)
+		return operation, true
 	case call.Via != "":
 		operation := operationSummary{
 			Symbol:            call.Symbol,
@@ -88,18 +85,11 @@ func buildOperationSummary(
 			HasImplementation: true,
 			CalledFrom:        viaCallsite(call.Via, firstCallBySymbol),
 		}
-		return operation, keepOperation(operation, repositoryOnly)
+		return operation, true
 	default:
 		operation := operationSummary{Symbol: call.Symbol, CalledFrom: []model.CallRef{call}}
-		return operation, keepOperation(operation, repositoryOnly)
+		return operation, true
 	}
-}
-
-func keepOperation(operation operationSummary, repositoryOnly bool) bool {
-	if !repositoryOnly {
-		return true
-	}
-	return looksLikeRepositoryOperation(model.CallRef{Symbol: operation.Symbol})
 }
 
 func viaCallsite(via string, firstCallBySymbol map[string]model.CallRef) []model.CallRef {
@@ -148,14 +138,11 @@ func relatedInternalCalls(children []model.CallRef, implementation model.CallRef
 
 func operationCallsiteSymbols(flow model.APIFlow) map[string]bool {
 	symbols := make(map[string]bool)
-	for _, call := range collectCalls(model.APIFlow{Trail: model.Trail{
-		Usecases:        flow.Trail.Usecases,
-		Services:        flow.Trail.Services,
-		Repositories:    flow.Trail.Repositories,
-		ExternalClients: flow.Trail.ExternalClients,
-	}}) {
-		if call.Via != "" {
-			symbols[call.Via] = true
+	for _, layer := range flow.Trail.Layers {
+		for _, call := range layer.Calls {
+			if call.Via != "" {
+				symbols[call.Via] = true
+			}
 		}
 	}
 	return symbols
@@ -179,12 +166,6 @@ func isLowSignalUnknown(call model.CallRef) bool {
 		strings.Contains(symbol, "zap") ||
 		receiver == "tok" ||
 		call.Method == "String"
-}
-
-func looksLikeRepositoryOperation(call model.CallRef) bool {
-	return strings.Contains(call.Symbol, "Repository.") ||
-		strings.Contains(call.Receiver, ".repos.") ||
-		strings.Contains(call.Symbol, ".repos.")
 }
 
 func isInternalHelperCall(call model.CallRef) bool {
@@ -232,17 +213,4 @@ func sameCall(a model.CallRef, b model.CallRef) bool {
 
 func callKey(call model.CallRef) string {
 	return fmt.Sprintf("%s\x00%s\x00%d", call.Symbol, call.File, call.Line)
-}
-
-func dedupeTypes(types []model.TypeRef) []model.TypeRef {
-	seen := make(map[string]bool, len(types))
-	var out []model.TypeRef
-	for _, typ := range types {
-		if seen[typ.Type] {
-			continue
-		}
-		seen[typ.Type] = true
-		out = append(out, typ)
-	}
-	return out
 }

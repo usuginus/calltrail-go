@@ -26,6 +26,7 @@ func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index
 		Response: model.TypeRef{
 			Type: typeString(fn.Type.Results.List[0].Type),
 		},
+		Trail:      model.NewTrail(layerNames(opts.Rules.Layers)),
 		Confidence: model.Confidence{Overall: "medium"},
 	}
 
@@ -108,12 +109,12 @@ func recordCall(
 		flow.Errors.GRPCCodes = append(flow.Errors.GRPCCodes, code)
 		return ref, false
 	}
-	if isNoiseCall(ref, ruleSet.IgnoreCalls, stdlibPackageAliases, scope) {
+	if isNoiseCall(ref, ruleSet.Ignore, stdlibPackageAliases, scope) {
 		return ref, false
 	}
 	ref.Depth = depth
 	ref.Via = via
-	appendCall(flow, ref, classify(ref, scope, ruleSet.Classifiers))
+	appendCall(flow, ref, classify(ref, scope, ruleSet.Layers))
 	return ref, true
 }
 
@@ -128,26 +129,15 @@ func recordImplementation(fset *token.FileSet, flow *model.APIFlow, info functio
 		Depth:    depth,
 		Via:      via,
 	}
-	appendCall(flow, ref, classifyByFile(ref, info.file, ruleSet.Classifiers))
+	appendCall(flow, ref, classifyByFile(ref, info.file, ruleSet.Layers))
 }
 
 func appendCall(flow *model.APIFlow, ref model.CallRef, layer string) {
-	switch layer {
-	case "usecase":
-		flow.Trail.Usecases = append(flow.Trail.Usecases, ref)
-	case "service":
-		flow.Trail.Services = append(flow.Trail.Services, ref)
-	case "repository":
-		flow.Trail.Repositories = append(flow.Trail.Repositories, ref)
-	case "external_client":
-		flow.Trail.ExternalClients = append(flow.Trail.ExternalClients, ref)
-	case "converter":
-		flow.Trail.Converters = append(flow.Trail.Converters, ref)
-	case "model":
-		flow.Trail.Models = append(flow.Trail.Models, model.TypeRef{Type: ref.Symbol})
-	default:
+	if layer == "unknown" {
 		flow.Trail.Unknown = append(flow.Trail.Unknown, ref)
+		return
 	}
+	flow.Trail.AppendLayerCall(layer, ref)
 }
 
 func implementationSymbol(info functionInfo) string {
@@ -155,4 +145,12 @@ func implementationSymbol(info functionInfo) string {
 		return info.fn.Name.Name
 	}
 	return info.receiverType + "." + info.fn.Name.Name
+}
+
+func layerNames(layers []rules.LayerRule) []string {
+	names := make([]string, 0, len(layers))
+	for _, layer := range layers {
+		names = append(names, layer.Name)
+	}
+	return names
 }

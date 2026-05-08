@@ -26,11 +26,12 @@ func TestAnalyzeDetectsGRPCHandlerTrail(t *testing.T) {
 	if flow.Request.Type != "*pb.GetFooRequest" {
 		t.Fatalf("request type = %q", flow.Request.Type)
 	}
-	if len(flow.Trail.Usecases) != 1 {
-		t.Fatalf("usecases = %d, want 1", len(flow.Trail.Usecases))
+	usecases := flow.Trail.LayerCalls("usecase")
+	if len(usecases) != 1 {
+		t.Fatalf("usecases = %d, want 1", len(usecases))
 	}
-	if flow.Trail.Usecases[0].Symbol != "s.fooUsecase.GetFoo" {
-		t.Fatalf("usecase symbol = %q", flow.Trail.Usecases[0].Symbol)
+	if usecases[0].Symbol != "s.fooUsecase.GetFoo" {
+		t.Fatalf("usecase symbol = %q", usecases[0].Symbol)
 	}
 	if len(flow.Errors.GRPCCodes) != 1 || flow.Errors.GRPCCodes[0] != "Internal" {
 		t.Fatalf("grpc codes = %#v, want [Internal]", flow.Errors.GRPCCodes)
@@ -47,23 +48,25 @@ func TestAnalyzeDepthTwoFollowsInterfaceImplementationCandidate(t *testing.T) {
 	}
 
 	flow := flows[0]
-	if len(flow.Trail.Usecases) != 2 {
-		t.Fatalf("usecases = %d, want 2", len(flow.Trail.Usecases))
+	usecases := flow.Trail.LayerCalls("usecase")
+	if len(usecases) != 2 {
+		t.Fatalf("usecases = %d, want 2", len(usecases))
 	}
-	if flow.Trail.Usecases[1].Symbol != "fooUsecase.GetFoo" {
-		t.Fatalf("depth-2 usecase symbol = %q", flow.Trail.Usecases[1].Symbol)
+	if usecases[1].Symbol != "fooUsecase.GetFoo" {
+		t.Fatalf("depth-2 usecase symbol = %q", usecases[1].Symbol)
 	}
-	if flow.Trail.Usecases[1].Depth != 2 {
-		t.Fatalf("depth-2 usecase depth = %d", flow.Trail.Usecases[1].Depth)
+	if usecases[1].Depth != 2 {
+		t.Fatalf("depth-2 usecase depth = %d", usecases[1].Depth)
 	}
-	if len(flow.Trail.Repositories) != 1 {
-		t.Fatalf("repositories = %d, want 1", len(flow.Trail.Repositories))
+	repositories := flow.Trail.LayerCalls("repository")
+	if len(repositories) != 1 {
+		t.Fatalf("repositories = %d, want 1", len(repositories))
 	}
-	if flow.Trail.Repositories[0].Symbol != "f.repos.Foo.FindFoo" {
-		t.Fatalf("repository symbol = %q", flow.Trail.Repositories[0].Symbol)
+	if repositories[0].Symbol != "f.repos.Foo.FindFoo" {
+		t.Fatalf("repository symbol = %q", repositories[0].Symbol)
 	}
-	if flow.Trail.Repositories[0].Via != "fooUsecase.GetFoo" {
-		t.Fatalf("repository via = %q", flow.Trail.Repositories[0].Via)
+	if repositories[0].Via != "fooUsecase.GetFoo" {
+		t.Fatalf("repository via = %q", repositories[0].Via)
 	}
 	if hasCall(flow.Trail.Unknown, "stdstrings.TrimSpace") {
 		t.Fatal("standard library alias call was not ignored")
@@ -80,17 +83,18 @@ func TestAnalyzeDepthThreeFollowsNestedStructFieldCandidate(t *testing.T) {
 	}
 
 	flow := flows[0]
-	if len(flow.Trail.Repositories) != 2 {
-		t.Fatalf("repositories = %d, want 2", len(flow.Trail.Repositories))
+	repositories := flow.Trail.LayerCalls("repository")
+	if len(repositories) != 2 {
+		t.Fatalf("repositories = %d, want 2", len(repositories))
 	}
-	if flow.Trail.Repositories[1].Symbol != "fooRepository.FindFoo" {
-		t.Fatalf("depth-3 repository symbol = %q", flow.Trail.Repositories[1].Symbol)
+	if repositories[1].Symbol != "fooRepository.FindFoo" {
+		t.Fatalf("depth-3 repository symbol = %q", repositories[1].Symbol)
 	}
-	if flow.Trail.Repositories[1].Depth != 3 {
-		t.Fatalf("depth-3 repository depth = %d", flow.Trail.Repositories[1].Depth)
+	if repositories[1].Depth != 3 {
+		t.Fatalf("depth-3 repository depth = %d", repositories[1].Depth)
 	}
-	if flow.Trail.Repositories[1].Via != "f.repos.Foo.FindFoo" {
-		t.Fatalf("depth-3 repository via = %q", flow.Trail.Repositories[1].Via)
+	if repositories[1].Via != "f.repos.Foo.FindFoo" {
+		t.Fatalf("depth-3 repository via = %q", repositories[1].Via)
 	}
 }
 
@@ -104,19 +108,49 @@ func TestAnalyzeFollowsConstructorChainedAndLocalVariableCalls(t *testing.T) {
 	}
 
 	flow := flows[0]
-	if !hasCall(flow.Trail.Usecases, "fooUsecase.GetFoo") {
-		t.Fatalf("usecases = %#v, want fooUsecase.GetFoo", flow.Trail.Usecases)
+	usecases := flow.Trail.LayerCalls("usecase")
+	if !hasCall(usecases, "fooUsecase.GetFoo") {
+		t.Fatalf("usecases = %#v, want fooUsecase.GetFoo", usecases)
 	}
-	if !hasCall(flow.Trail.Services, "fooService.FetchFoo") {
-		t.Fatalf("services = %#v, want fooService.FetchFoo", flow.Trail.Services)
+	services := flow.Trail.LayerCalls("service")
+	if !hasCall(services, "fooService.FetchFoo") {
+		t.Fatalf("services = %#v, want fooService.FetchFoo", services)
 	}
-	if !hasCall(flow.Trail.Usecases, "NewFooUsecase().GetFoo") {
-		t.Fatalf("usecases = %#v, want NewFooUsecase().GetFoo", flow.Trail.Usecases)
+	if !hasCall(usecases, "NewFooUsecase().GetFoo") {
+		t.Fatalf("usecases = %#v, want NewFooUsecase().GetFoo", usecases)
+	}
+}
+
+func TestAnalyzeUsesConfiguredLayerNameInTrail(t *testing.T) {
+	ruleSet, err := rules.Load("")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	for i := range ruleSet.Layers {
+		if ruleSet.Layers[i].Name == "usecase" {
+			ruleSet.Layers[i].Name = "application"
+		}
+	}
+
+	flows, err := Analyze([]string{"testdata/simple"}, Options{Rules: ruleSet})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	if len(flow.Trail.LayerCalls("usecase")) != 0 {
+		t.Fatalf("usecase layer = %#v, want empty", flow.Trail.LayerCalls("usecase"))
+	}
+	if got := flow.Trail.LayerCalls("application"); len(got) != 1 || got[0].Symbol != "s.fooUsecase.GetFoo" {
+		t.Fatalf("application layer = %#v, want s.fooUsecase.GetFoo", got)
 	}
 }
 
 func TestClassifyUsesReceiverTypeBeforeCurrentFilePath(t *testing.T) {
-	ruleSet, err := rules.Load("generic", "")
+	ruleSet, err := rules.Load("")
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
@@ -134,13 +168,13 @@ func TestClassifyUsesReceiverTypeBeforeCurrentFilePath(t *testing.T) {
 		},
 	}
 
-	if got := classify(ref, scope, ruleSet.Classifiers); got != "repository" {
+	if got := classify(ref, scope, ruleSet.Layers); got != "repository" {
 		t.Fatalf("classify = %q, want repository", got)
 	}
 }
 
 func TestClassifyDoesNotUseCurrentFilePathForUtilityCalls(t *testing.T) {
-	ruleSet, err := rules.Load("generic", "")
+	ruleSet, err := rules.Load("")
 	if err != nil {
 		t.Fatalf("Load returned error: %v", err)
 	}
@@ -151,7 +185,7 @@ func TestClassifyDoesNotUseCurrentFilePathForUtilityCalls(t *testing.T) {
 		File:     "internal/usecase/foo.go",
 	}
 
-	if got := classify(ref, scopeInfo{receiverVar: "c"}, ruleSet.Classifiers); got != "unknown" {
+	if got := classify(ref, scopeInfo{receiverVar: "c"}, ruleSet.Layers); got != "unknown" {
 		t.Fatalf("classify = %q, want unknown", got)
 	}
 }

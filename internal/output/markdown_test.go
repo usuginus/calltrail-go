@@ -8,7 +8,7 @@ import (
 	"github.com/usuginus/calltrail-go/internal/model"
 )
 
-func TestWriteMarkdownIncludesModels(t *testing.T) {
+func TestWriteMarkdownUsesConfiguredLayerNames(t *testing.T) {
 	var buf bytes.Buffer
 	err := WriteMarkdown(&buf, []model.APIFlow{
 		{
@@ -22,7 +22,14 @@ func TestWriteMarkdownIncludesModels(t *testing.T) {
 			Request:  model.TypeRef{Type: "*pb.GetFooRequest"},
 			Response: model.TypeRef{Type: "*pb.GetFooResponse"},
 			Trail: model.Trail{
-				Models: []model.TypeRef{{Type: "entity.Foo"}},
+				Layers: []model.LayerCalls{
+					{
+						Name: "domain",
+						Calls: []model.CallRef{
+							{Symbol: "entity.Foo.Validate", Receiver: "entity.Foo", Method: "Validate", File: "entity.go", Line: 12, Depth: 1},
+						},
+					},
+				},
 			},
 		},
 	})
@@ -31,8 +38,8 @@ func TestWriteMarkdownIncludesModels(t *testing.T) {
 	}
 
 	got := buf.String()
-	if !strings.Contains(got, "### Models\n- `entity.Foo`") {
-		t.Fatalf("markdown output does not include models:\n%s", got)
+	if !strings.Contains(got, "### domain\n- `entity.Foo.Validate`") {
+		t.Fatalf("markdown output does not include configured layer:\n%s", got)
 	}
 }
 
@@ -50,16 +57,24 @@ func TestWriteMarkdownSummarizesRepositoryOperations(t *testing.T) {
 			Request:  model.TypeRef{Type: "*pb.CreateFooRequest"},
 			Response: model.TypeRef{Type: "*pb.Foo"},
 			Trail: model.Trail{
-				Usecases: []model.CallRef{
-					{Symbol: "s.fooUsecase.CreateFoo", Receiver: "s.fooUsecase", Method: "CreateFoo", File: "handler.go", Line: 12, Depth: 1},
-					{Symbol: "fooUsecase.CreateFoo", Receiver: "fooUsecase", Method: "CreateFoo", File: "usecase.go", Line: 20, Depth: 2, Via: "s.fooUsecase.CreateFoo"},
-				},
-				Repositories: []model.CallRef{
-					{Symbol: "u.repos.Foo.FindFoo", Receiver: "u.repos.Foo", Method: "FindFoo", File: "usecase.go", Line: 23, Depth: 2, Via: "s.fooUsecase.CreateFoo"},
-					{Symbol: "FooRepository.FindFoo", Receiver: "FooRepository", Method: "FindFoo", File: "repository.go", Line: 30, Depth: 3, Via: "u.repos.Foo.FindFoo"},
-					{Symbol: "repo.columns", Receiver: "repo", Method: "columns", File: "repository.go", Line: 31, Depth: 3, Via: "u.repos.Foo.FindFoo"},
-					{Symbol: "u.repos.Foo.FindFoo", Receiver: "u.repos.Foo", Method: "FindFoo", File: "usecase.go", Line: 40, Depth: 2, Via: "s.fooUsecase.CreateFoo"},
-					{Symbol: "FooRepository.FindFoo", Receiver: "FooRepository", Method: "FindFoo", File: "repository.go", Line: 30, Depth: 3, Via: "u.repos.Foo.FindFoo"},
+				Layers: []model.LayerCalls{
+					{
+						Name: "usecase",
+						Calls: []model.CallRef{
+							{Symbol: "s.fooUsecase.CreateFoo", Receiver: "s.fooUsecase", Method: "CreateFoo", File: "handler.go", Line: 12, Depth: 1},
+							{Symbol: "fooUsecase.CreateFoo", Receiver: "fooUsecase", Method: "CreateFoo", File: "usecase.go", Line: 20, Depth: 2, Via: "s.fooUsecase.CreateFoo"},
+						},
+					},
+					{
+						Name: "repository",
+						Calls: []model.CallRef{
+							{Symbol: "u.repos.Foo.FindFoo", Receiver: "u.repos.Foo", Method: "FindFoo", File: "usecase.go", Line: 23, Depth: 2, Via: "s.fooUsecase.CreateFoo"},
+							{Symbol: "FooRepository.FindFoo", Receiver: "FooRepository", Method: "FindFoo", File: "repository.go", Line: 30, Depth: 3, Via: "u.repos.Foo.FindFoo"},
+							{Symbol: "repo.columns", Receiver: "repo", Method: "columns", File: "repository.go", Line: 31, Depth: 3, Via: "u.repos.Foo.FindFoo"},
+							{Symbol: "u.repos.Foo.FindFoo", Receiver: "u.repos.Foo", Method: "FindFoo", File: "usecase.go", Line: 40, Depth: 2, Via: "s.fooUsecase.CreateFoo"},
+							{Symbol: "FooRepository.FindFoo", Receiver: "FooRepository", Method: "FindFoo", File: "repository.go", Line: 30, Depth: 3, Via: "u.repos.Foo.FindFoo"},
+						},
+					},
 				},
 			},
 		},

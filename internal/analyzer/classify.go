@@ -9,7 +9,8 @@ import (
 )
 
 func isHandler(fn *ast.FuncDecl, packageName string, file string, handlerRules rules.HandlerRules) bool {
-	if !matchesAnyEqual(packageName, handlerRules.PackageNames) && !matchesAnyContains(file, handlerRules.PathContains) {
+	if !matchesAnyEqual(packageName, handlerRules.Match.PackageNames) &&
+		!matchesAnyContains(file, handlerRules.Match.FilePathContains) {
 		return false
 	}
 	if fn.Recv == nil || fn.Type.Params == nil || fn.Type.Results == nil {
@@ -18,16 +19,16 @@ func isHandler(fn *ast.FuncDecl, packageName string, file string, handlerRules r
 	if len(fn.Type.Params.List) < 2 || len(fn.Type.Results.List) != 2 {
 		return false
 	}
-	if handlerRules.RequireContextFirstArg && !isContextType(fn.Type.Params.List[0].Type) {
+	if handlerRules.Signature.RequireContextFirstArg && !isContextType(fn.Type.Params.List[0].Type) {
 		return false
 	}
-	if handlerRules.RequirePointerRequest && !isPointerType(fn.Type.Params.List[1].Type) {
+	if handlerRules.Signature.RequirePointerRequest && !isPointerType(fn.Type.Params.List[1].Type) {
 		return false
 	}
-	if handlerRules.RequirePointerResponse && !isPointerType(fn.Type.Results.List[0].Type) {
+	if handlerRules.Signature.RequirePointerResponse && !isPointerType(fn.Type.Results.List[0].Type) {
 		return false
 	}
-	return !handlerRules.RequireErrorReturn || typeString(fn.Type.Results.List[1].Type) == "error"
+	return !handlerRules.Signature.RequireErrorReturn || typeString(fn.Type.Results.List[1].Type) == "error"
 }
 
 func isContextType(expr ast.Expr) bool {
@@ -39,49 +40,51 @@ func isPointerType(expr ast.Expr) bool {
 	return ok
 }
 
-func classify(ref model.CallRef, scope scopeInfo, classifiers []rules.ClassifierRule) string {
+func classify(ref model.CallRef, scope scopeInfo, layers []rules.LayerRule) string {
 	fieldType := strings.ToLower(resolveReceiverType(ref.Receiver, scope))
-	for _, classifier := range classifiers {
-		if matchesClassifier(ref, fieldType, classifier) {
-			return classifier.Layer
+	for _, layer := range layers {
+		if matchesLayer(ref, fieldType, layer) {
+			return layer.Name
 		}
 	}
 	return "unknown"
 }
 
-func classifyByFile(ref model.CallRef, file string, classifiers []rules.ClassifierRule) string {
+func classifyByFile(ref model.CallRef, file string, layers []rules.LayerRule) string {
 	file = strings.ToLower(file)
 	ref.File = file
-	for _, classifier := range classifiers {
-		if matchesAnyContains(file, classifier.PathContains) {
-			return classifier.Layer
+	for _, layer := range layers {
+		if matchesAnyContains(file, layer.Match.FilePathContains) {
+			return layer.Name
 		}
 	}
-	return classify(ref, scopeInfo{}, classifiers)
+	return classify(ref, scopeInfo{}, layers)
 }
 
-func isNoiseCall(ref model.CallRef, ignore rules.IgnoreCallRules, stdlibPackageAliases map[string]bool, scope scopeInfo) bool {
+func isNoiseCall(ref model.CallRef, ignore rules.IgnoreRules, stdlibPackageAliases map[string]bool, scope scopeInfo) bool {
 	if ref.Receiver == "" {
 		return true
 	}
-	if matchesAnyEqual(ref.Symbol, ignore.Symbols) || matchesAnyEqual(ref.Method, ignore.Methods) {
+	if matchesAnyEqual(ref.Symbol, ignore.Calls.FullNames) ||
+		matchesAnyEqual(ref.Method, ignore.Calls.MethodNames) {
 		return true
 	}
-	if matchesAnyPrefix(ref.Symbol, ignore.SymbolPrefixes) || matchesAnyPrefix(ref.Method, ignore.MethodPrefixes) {
+	if matchesAnyPrefix(ref.Symbol, ignore.Calls.FullNamePrefixes) ||
+		matchesAnyPrefix(ref.Method, ignore.Calls.MethodNamePrefixes) {
 		return true
 	}
-	for _, pkg := range ignore.Packages {
+	for _, pkg := range ignore.Calls.PackageNames {
 		if isPackageCall(ref, pkg) {
 			return true
 		}
 	}
-	if ignore.AutoStdlib && isStdlibPackageCall(ref, stdlibPackageAliases) {
+	if ignore.StandardLibrary && isStdlibPackageCall(ref, stdlibPackageAliases) {
 		return true
 	}
-	if strings.HasPrefix(ref.Method, "Get") && matchesAnyEqual(ref.Receiver, ignore.ProtoGetterReceivers) {
+	if strings.HasPrefix(ref.Method, "Get") && matchesAnyEqual(ref.Receiver, ignore.Getters.ReceiverNames) {
 		return true
 	}
-	return ignore.LocalGetters &&
+	return ignore.Getters.LocalValues &&
 		strings.HasPrefix(ref.Method, "Get") &&
 		isLocalValueReceiver(ref.Receiver) &&
 		!hasKnownReceiverType(ref.Receiver, scope)
@@ -127,14 +130,14 @@ func hasKnownReceiverType(receiver string, scope scopeInfo) bool {
 	return false
 }
 
-func matchesClassifier(ref model.CallRef, fieldType string, classifier rules.ClassifierRule) bool {
+func matchesLayer(ref model.CallRef, fieldType string, layer rules.LayerRule) bool {
 	symbol := strings.ToLower(ref.Symbol)
 	method := strings.ToLower(ref.Method)
 	fieldType = strings.ToLower(fieldType)
-	return matchesAnyContains(symbol, classifier.SymbolContains) ||
-		matchesAnyContains(fieldType, classifier.TypeContains) ||
-		matchesAnyPrefix(method, classifier.MethodPrefixes) ||
-		matchesAnyContains(method, classifier.MethodContains)
+	return matchesAnyContains(symbol, layer.Match.CallNameContains) ||
+		matchesAnyContains(fieldType, layer.Match.ReceiverTypeContains) ||
+		matchesAnyPrefix(method, layer.Match.MethodNamePrefixes) ||
+		matchesAnyContains(method, layer.Match.MethodNameContains)
 }
 
 func matchesAnyEqual(value string, patterns []string) bool {

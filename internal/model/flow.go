@@ -23,14 +23,15 @@ type TypeRef struct {
 }
 
 type Trail struct {
-	Usecases        []CallRef `json:"usecases,omitempty"`
-	Services        []CallRef `json:"services,omitempty"`
-	Repositories    []CallRef `json:"repositories,omitempty"`
-	Models          []TypeRef `json:"models,omitempty"`
-	ExternalClients []CallRef `json:"external_clients,omitempty"`
-	Converters      []CallRef `json:"converters,omitempty"`
-	Async           []CallRef `json:"async,omitempty"`
-	Unknown         []CallRef `json:"unknown,omitempty"`
+	Layers     []LayerCalls `json:"layers,omitempty"`
+	Async      []CallRef    `json:"async,omitempty"`
+	Unknown    []CallRef    `json:"unknown,omitempty"`
+	layerOrder []string
+}
+
+type LayerCalls struct {
+	Name  string    `json:"name"`
+	Calls []CallRef `json:"calls,omitempty"`
 }
 
 type CallRef struct {
@@ -54,4 +55,76 @@ type Unresolved struct {
 
 type Confidence struct {
 	Overall string `json:"overall"`
+}
+
+func NewTrail(layerOrder []string) Trail {
+	return Trail{layerOrder: uniqueStrings(layerOrder)}
+}
+
+func (t *Trail) AppendLayerCall(name string, call CallRef) {
+	if name == "" {
+		t.Unknown = append(t.Unknown, call)
+		return
+	}
+	for i := range t.Layers {
+		if t.Layers[i].Name == name {
+			t.Layers[i].Calls = append(t.Layers[i].Calls, call)
+			return
+		}
+	}
+
+	layer := LayerCalls{Name: name, Calls: []CallRef{call}}
+	insertAt := t.layerInsertIndex(name)
+	if insertAt == len(t.Layers) {
+		t.Layers = append(t.Layers, layer)
+		return
+	}
+	t.Layers = append(t.Layers, LayerCalls{})
+	copy(t.Layers[insertAt+1:], t.Layers[insertAt:])
+	t.Layers[insertAt] = layer
+}
+
+func (t Trail) LayerCalls(name string) []CallRef {
+	for _, layer := range t.Layers {
+		if layer.Name == name {
+			return layer.Calls
+		}
+	}
+	return nil
+}
+
+func (t Trail) layerInsertIndex(name string) int {
+	targetOrder := orderIndex(t.layerOrder, name)
+	if targetOrder < 0 {
+		return len(t.Layers)
+	}
+	for i, layer := range t.Layers {
+		layerOrder := orderIndex(t.layerOrder, layer.Name)
+		if layerOrder < 0 || layerOrder > targetOrder {
+			return i
+		}
+	}
+	return len(t.Layers)
+}
+
+func orderIndex(values []string, value string) int {
+	for i, existing := range values {
+		if existing == value {
+			return i
+		}
+	}
+	return -1
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	var out []string
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }

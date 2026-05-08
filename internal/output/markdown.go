@@ -14,12 +14,9 @@ func WriteMarkdown(w io.Writer, flows []model.APIFlow) error {
 		}
 
 		allCalls := collectCalls(flow)
-		writeOperations(w, "Usecases", flow.Trail.Usecases, allCalls, false)
-		writeOperations(w, "Services", flow.Trail.Services, allCalls, false)
-		writeOperations(w, "Repositories", flow.Trail.Repositories, allCalls, true)
-		writeTypes(w, "Models", flow.Trail.Models)
-		writeOperations(w, "External Clients", flow.Trail.ExternalClients, allCalls, false)
-		writeCalls(w, "Converters", dedupeCalls(flow.Trail.Converters))
+		for _, layer := range flow.Trail.Layers {
+			writeOperations(w, layer.Name, layer.Calls, allCalls)
+		}
 		writeCalls(w, "Async", dedupeCalls(flow.Trail.Async))
 		writeCalls(w, "Other Notable Calls", summarizeUnknown(flow.Trail.Unknown, operationCallsiteSymbols(flow)))
 		writeErrorCodes(w, flow.Errors.GRPCCodes)
@@ -46,8 +43,8 @@ func writeFlowHeader(w io.Writer, flow model.APIFlow) error {
 	return nil
 }
 
-func writeOperations(w io.Writer, title string, calls []model.CallRef, allCalls []model.CallRef, repositoryOnly bool) {
-	operations := summarizeOperations(calls, allCalls, repositoryOnly)
+func writeOperations(w io.Writer, title string, calls []model.CallRef, allCalls []model.CallRef) {
+	operations := summarizeOperations(calls, allCalls)
 	if len(operations) == 0 {
 		return
 	}
@@ -100,18 +97,6 @@ func writeRelatedCalls(w io.Writer, calls []model.CallRef) {
 	for _, call := range calls {
 		fmt.Fprintf(w, "    - `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
 	}
-}
-
-func writeTypes(w io.Writer, title string, types []model.TypeRef) {
-	types = dedupeTypes(types)
-	if len(types) == 0 {
-		return
-	}
-	fmt.Fprintf(w, "### %s\n", title)
-	for _, typ := range types {
-		fmt.Fprintf(w, "- `%s`\n", typ.Type)
-	}
-	fmt.Fprintln(w)
 }
 
 func writeCalls(w io.Writer, title string, calls []model.CallRef) {

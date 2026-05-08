@@ -49,7 +49,7 @@ func resolveCandidates(ref model.CallRef, scope scopeInfo, index projectIndex, r
 		if fieldTypeIsInterface && candidate.receiverType == fieldType {
 			continue
 		}
-		if isMockCandidate(candidate, ruleSet.Implementation) {
+		if isMockCandidate(candidate, ruleSet.Resolution) {
 			continue
 		}
 		if fieldTypeIsInterface {
@@ -88,11 +88,11 @@ func implementsInterface(receiverType string, interfaceType string, index projec
 	return true
 }
 
-func isMockCandidate(candidate functionInfo, implementation rules.ImplementationRules) bool {
-	if matchesAnyPrefix(candidate.receiverType, implementation.MockReceiverPrefixes) {
+func isMockCandidate(candidate functionInfo, resolution rules.ResolutionRules) bool {
+	if matchesAnyPrefix(candidate.receiverType, resolution.SkipImplementations.ReceiverNamePrefixes) {
 		return true
 	}
-	return matchesAnyContains(strings.ToLower(candidate.file), implementation.MockPathContains)
+	return matchesAnyContains(strings.ToLower(candidate.file), resolution.SkipImplementations.FilePathContains)
 }
 
 func callRef(fset *token.FileSet, file string, call *ast.CallExpr, index projectIndex, scope scopeInfo) model.CallRef {

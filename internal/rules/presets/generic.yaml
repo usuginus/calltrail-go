@@ -1,82 +1,111 @@
+version: 1
+
 handlers:
-  package_names:
-    - grpc
-  path_contains:
-    - /grpc/
-  require_context_first_arg: true
-  require_pointer_request: true
-  require_pointer_response: true
-  require_error_return: true
+  match:
+    package_names:
+      - grpc
+    file_path_contains:
+      - /grpc/
+  signature:
+    require_context_first_arg: true
+    require_pointer_request: true
+    require_pointer_response: true
+    require_error_return: true
 
-classifiers:
-  - layer: service
-    symbol_contains:
-      - service
-    type_contains:
-      - service
-    path_contains:
-      - /service/
-  - layer: usecase
-    symbol_contains:
-      - usecase
-      - use_case
-    type_contains:
-      - usecase
-    path_contains:
-      - /usecase/
-  - layer: repository
-    symbol_contains:
-      - repository
-      - repo
-      - store
-    type_contains:
-      - repository
-      - repo
-      - store
-    path_contains:
-      - /repository/
-      - /repositories/
-      - /repo/
-  - layer: external_client
-    symbol_contains:
-      - client
-    type_contains:
-      - client
-  - layer: converter
-    method_prefixes:
-      - convert
-    method_contains:
-      - toentity
-      - topb
-      - toproto
-  - layer: model
-    symbol_contains:
-      - model.
-      - entity.
+layers:
+  - name: usecase
+    match:
+      call_name_contains:
+        - usecase
+      receiver_type_contains:
+        - usecase
+      file_path_contains:
+        - /usecase/
+        - /usecases/
 
-ignore_calls:
-  auto_stdlib: true
-  symbols:
-    - err.Error
-    - context.Background
-  packages:
-    - status
-  methods:
-    - Close
-    - GRPCStatus
-    - IsZero
-    - Nanosecond
-    - Unix
-  local_getters: true
-  proto_getter_receivers:
-    - in
-    - req
-    - request
-    - resp
-    - response
+  - name: service
+    match:
+      call_name_contains:
+        - service
+      receiver_type_contains:
+        - service
+      file_path_contains:
+        - /service/
+        - /services/
 
-implementation:
-  mock_receiver_prefixes:
-    - Mock
-  mock_path_contains:
-    - /mocks/
+  - name: repository
+    match:
+      call_name_contains:
+        - repository
+      receiver_type_contains:
+        - repository
+      file_path_contains:
+        - /repository/
+        - /repositories/
+
+  - name: external_client
+    match:
+      call_name_contains:
+        - client
+      receiver_type_contains:
+        - client
+      file_path_contains:
+        - /client/
+        - /clients/
+
+  - name: converter
+    match:
+      call_name_contains:
+        - converter
+      receiver_type_contains:
+        - converter
+      file_path_contains:
+        - /converter/
+        - /converters/
+      method_name_prefixes:
+        - convert
+
+  - name: model
+    match:
+      call_name_contains:
+        - model.
+      receiver_type_contains:
+        - model
+      file_path_contains:
+        - /model/
+        - /models/
+
+ignore:
+  standard_library: true
+  calls:
+    full_names:
+      - err.Error
+      - context.Background
+      - context.TODO
+    package_names:
+      - status
+    method_names:
+      - Close
+      - GRPCStatus
+      - IsZero
+      - Nanosecond
+      - Unix
+  getters:
+    local_values: true
+    receiver_names:
+      - in
+      - req
+      - request
+      - resp
+      - response
+
+resolution:
+  skip_implementations:
+    receiver_name_prefixes:
+      - Mock
+      - Fake
+    file_path_contains:
+      - /mock/
+      - /mocks/
+      - /fake/
+      - /fakes/

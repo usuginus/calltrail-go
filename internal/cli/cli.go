@@ -19,7 +19,6 @@ import (
 const (
 	defaultDepth  = 3
 	defaultFormat = "markdown"
-	defaultPreset = "generic"
 )
 
 var ErrHelp = errors.New("help requested")
@@ -28,7 +27,6 @@ type Options struct {
 	Format string
 	RPC    string
 	Depth  int
-	Preset string
 	Config string
 	List   bool
 	Paths  []string
@@ -43,7 +41,7 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) error {
 		return err
 	}
 
-	ruleSet, err := rules.Load(opts.Preset, opts.Config)
+	ruleSet, err := rules.Load(opts.Config)
 	if err != nil {
 		fmt.Fprintf(stderr, "calltrail-go: %v\n", err)
 		return err
@@ -95,7 +93,6 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	fs.StringVar(&opts.Format, "format", defaultFormat, "output format: markdown or json")
 	fs.StringVar(&opts.RPC, "rpc", "", "filter by RPC/API handler name")
 	fs.IntVar(&opts.Depth, "depth", defaultDepth, "call extraction depth")
-	fs.StringVar(&opts.Preset, "preset", defaultPreset, "rule preset")
 	fs.StringVar(&opts.Config, "config", "", "path to .calltrail.yaml")
 	fs.BoolVar(&opts.List, "list", false, "list detected handlers and exit")
 	fs.Usage = func() {
@@ -196,7 +193,7 @@ func flagTakesValue(arg string) bool {
 		name = name[:idx]
 	}
 	switch name {
-	case "config", "depth", "format", "preset", "rpc":
+	case "config", "depth", "format", "rpc":
 		return true
 	default:
 		return false

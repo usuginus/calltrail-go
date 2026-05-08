@@ -50,7 +50,7 @@ func normalizeOptions(opts Options) (Options, error) {
 		opts.Depth = 1
 	}
 	if opts.Rules.IsZero() {
-		ruleSet, err := rules.Load("generic", "")
+		ruleSet, err := rules.Load("")
 		if err != nil {
 			return Options{}, err
 		}

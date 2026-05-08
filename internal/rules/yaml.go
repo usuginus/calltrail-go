@@ -5,11 +5,19 @@ import (
 	"strings"
 )
 
+type parserState struct {
+	section         string
+	handlerGroup    string
+	layerGroup      string
+	ignoreGroup     string
+	resolutionGroup string
+	listKey         string
+	currentLayer    *LayerRule
+}
+
 func parseYAML(input string) (RuleSet, error) {
 	var ruleSet RuleSet
-	var section string
-	var listKey string
-	var currentClassifier *ClassifierRule
+	var state parserState
 
 	lines := strings.Split(input, "\n")
 	for lineNo, raw := range lines {
@@ -21,25 +29,16 @@ func parseYAML(input string) (RuleSet, error) {
 		text := strings.TrimSpace(line)
 
 		switch {
-		case indent == 0 && strings.HasSuffix(text, ":"):
-			section = strings.TrimSuffix(text, ":")
-			listKey = ""
-			currentClassifier = nil
-		case section == "classifiers" && indent == 2 && strings.HasPrefix(text, "- "):
-			classifier := ClassifierRule{}
-			if err := setClassifierScalar(&classifier, strings.TrimPrefix(text, "- ")); err != nil {
-				return RuleSet{}, withLine(lineNo, err)
-			}
-			ruleSet.Classifiers = append(ruleSet.Classifiers, classifier)
-			currentClassifier = &ruleSet.Classifiers[len(ruleSet.Classifiers)-1]
-			listKey = ""
 		case strings.HasPrefix(text, "- "):
 			value := strings.TrimSpace(strings.TrimPrefix(text, "- "))
-			if err := addListValue(&ruleSet, currentClassifier, section, listKey, value); err != nil {
+			if err := addListItem(&ruleSet, &state, indent, value); err != nil {
 				return RuleSet{}, withLine(lineNo, err)
 			}
 		case strings.HasSuffix(text, ":"):
-			listKey = strings.TrimSuffix(text, ":")
+			key := strings.TrimSpace(strings.TrimSuffix(text, ":"))
+			if err := setContext(&state, indent, key); err != nil {
+				return RuleSet{}, withLine(lineNo, err)
+			}
 		default:
 			key, value, ok := strings.Cut(text, ":")
 			if !ok {
@@ -47,13 +46,7 @@ func parseYAML(input string) (RuleSet, error) {
 			}
 			key = strings.TrimSpace(key)
 			value = strings.TrimSpace(value)
-			if section == "classifiers" && currentClassifier != nil {
-				if err := setClassifierScalar(currentClassifier, key+": "+value); err != nil {
-					return RuleSet{}, withLine(lineNo, err)
-				}
-				continue
-			}
-			if err := setScalar(&ruleSet, section, key, value); err != nil {
+			if err := setScalar(&ruleSet, &state, indent, key, value); err != nil {
 				return RuleSet{}, withLine(lineNo, err)
 			}
 		}
@@ -72,113 +65,271 @@ func withLine(lineNo int, err error) error {
 	return fmt.Errorf("line %d: %w", lineNo+1, err)
 }
 
-func setScalar(ruleSet *RuleSet, section string, key string, value string) error {
-	switch section {
-	case "handlers":
-		switch key {
-		case "require_context_first_arg":
-			ruleSet.Handlers.RequireContextFirstArg = parseBool(value)
-		case "require_pointer_request":
-			ruleSet.Handlers.RequirePointerRequest = parseBool(value)
-		case "require_pointer_response":
-			ruleSet.Handlers.RequirePointerResponse = parseBool(value)
-		case "require_error_return":
-			ruleSet.Handlers.RequireErrorReturn = parseBool(value)
-		default:
-			return fmt.Errorf("unknown handlers key %q", key)
-		}
-	case "ignore_calls":
-		switch key {
-		case "auto_stdlib":
-			ruleSet.IgnoreCalls.AutoStdlib = parseBool(value)
-		case "local_getters":
-			ruleSet.IgnoreCalls.LocalGetters = parseBool(value)
-		default:
-			return fmt.Errorf("unknown ignore_calls key %q", key)
-		}
-	default:
-		return fmt.Errorf("unknown scalar section %q", section)
-	}
-	return nil
+func cleanValue(value string) string {
+	return strings.Trim(strings.TrimSpace(value), "\"'")
 }
 
-func setClassifierScalar(classifier *ClassifierRule, expr string) error {
-	key, value, ok := strings.Cut(expr, ":")
-	if !ok {
-		return fmt.Errorf("unsupported classifier expression %q", expr)
-	}
-	key = strings.TrimSpace(key)
-	value = strings.TrimSpace(value)
-	switch key {
-	case "layer":
-		classifier.Layer = value
+func setContext(state *parserState, indent int, key string) error {
+	switch indent {
+	case 0:
+		switch key {
+		case "handlers", "layers", "ignore", "resolution":
+			*state = parserState{section: key}
+			return nil
+		default:
+			return fmt.Errorf("unknown section %q", key)
+		}
+	case 2:
+		switch state.section {
+		case "handlers":
+			switch key {
+			case "match", "signature":
+				state.handlerGroup = key
+				state.listKey = ""
+				return nil
+			default:
+				return fmt.Errorf("unknown handlers group %q", key)
+			}
+		case "ignore":
+			switch key {
+			case "calls", "getters":
+				state.ignoreGroup = key
+				state.listKey = ""
+				return nil
+			default:
+				return fmt.Errorf("unknown ignore group %q", key)
+			}
+		case "resolution":
+			if key != "skip_implementations" {
+				return fmt.Errorf("unknown resolution group %q", key)
+			}
+			state.resolutionGroup = key
+			state.listKey = ""
+			return nil
+		default:
+			return fmt.Errorf("unexpected nested key %q in section %q", key, state.section)
+		}
+	case 4:
+		switch state.section {
+		case "handlers":
+			if state.handlerGroup == "" {
+				return fmt.Errorf("handlers key %q must be under match or signature", key)
+			}
+			state.listKey = key
+			return nil
+		case "ignore":
+			if state.ignoreGroup == "" {
+				return fmt.Errorf("ignore key %q must be under calls or getters", key)
+			}
+			state.listKey = key
+			return nil
+		case "resolution":
+			if state.resolutionGroup == "" {
+				return fmt.Errorf("resolution key %q must be under skip_implementations", key)
+			}
+			state.listKey = key
+			return nil
+		case "layers":
+			if state.currentLayer == nil {
+				return fmt.Errorf("layer key %q without layer item", key)
+			}
+			if key != "match" {
+				return fmt.Errorf("unknown layer group %q", key)
+			}
+			state.layerGroup = key
+			state.listKey = ""
+			return nil
+		default:
+			return fmt.Errorf("unexpected nested key %q", key)
+		}
+	case 6:
+		if state.section != "layers" || state.currentLayer == nil || state.layerGroup != "match" {
+			return fmt.Errorf("unexpected list key %q", key)
+		}
+		state.listKey = key
+		return nil
 	default:
-		return fmt.Errorf("unknown classifier key %q", key)
+		return fmt.Errorf("unsupported indentation for key %q", key)
 	}
-	return nil
 }
 
-func addListValue(ruleSet *RuleSet, classifier *ClassifierRule, section string, key string, value string) error {
-	value = strings.Trim(value, "\"'")
-	if section == "classifiers" {
-		if classifier == nil {
-			return fmt.Errorf("classifier list value without classifier")
+func setScalar(ruleSet *RuleSet, state *parserState, indent int, key string, value string) error {
+	value = cleanValue(value)
+	if indent == 0 {
+		if key != "version" {
+			return fmt.Errorf("unknown top-level key %q", key)
 		}
-		switch key {
-		case "symbol_contains":
-			classifier.SymbolContains = append(classifier.SymbolContains, value)
-		case "type_contains":
-			classifier.TypeContains = append(classifier.TypeContains, value)
-		case "path_contains":
-			classifier.PathContains = append(classifier.PathContains, value)
-		case "method_prefixes":
-			classifier.MethodPrefixes = append(classifier.MethodPrefixes, value)
-		case "method_contains":
-			classifier.MethodContains = append(classifier.MethodContains, value)
-		default:
-			return fmt.Errorf("unknown classifier list %q", key)
+		if value != "1" {
+			return fmt.Errorf("unsupported version %q", value)
 		}
 		return nil
 	}
 
-	switch section {
+	switch state.section {
 	case "handlers":
-		switch key {
-		case "package_names":
-			ruleSet.Handlers.PackageNames = append(ruleSet.Handlers.PackageNames, value)
-		case "path_contains":
-			ruleSet.Handlers.PathContains = append(ruleSet.Handlers.PathContains, value)
-		default:
-			return fmt.Errorf("unknown handlers list %q", key)
+		if state.handlerGroup != "signature" || indent != 4 {
+			return fmt.Errorf("unknown handlers scalar %q", key)
 		}
-	case "ignore_calls":
-		switch key {
-		case "symbols":
-			ruleSet.IgnoreCalls.Symbols = append(ruleSet.IgnoreCalls.Symbols, value)
-		case "packages":
-			ruleSet.IgnoreCalls.Packages = append(ruleSet.IgnoreCalls.Packages, value)
-		case "methods":
-			ruleSet.IgnoreCalls.Methods = append(ruleSet.IgnoreCalls.Methods, value)
-		case "method_prefixes":
-			ruleSet.IgnoreCalls.MethodPrefixes = append(ruleSet.IgnoreCalls.MethodPrefixes, value)
-		case "symbol_prefixes":
-			ruleSet.IgnoreCalls.SymbolPrefixes = append(ruleSet.IgnoreCalls.SymbolPrefixes, value)
-		case "proto_getter_receivers":
-			ruleSet.IgnoreCalls.ProtoGetterReceivers = append(ruleSet.IgnoreCalls.ProtoGetterReceivers, value)
-		default:
-			return fmt.Errorf("unknown ignore_calls list %q", key)
+		return setHandlerSignatureScalar(&ruleSet.Handlers.Signature, key, value)
+	case "layers":
+		if state.currentLayer == nil || indent != 4 {
+			return fmt.Errorf("unknown layer scalar %q", key)
 		}
-	case "implementation":
-		switch key {
-		case "mock_receiver_prefixes":
-			ruleSet.Implementation.MockReceiverPrefixes = append(ruleSet.Implementation.MockReceiverPrefixes, value)
-		case "mock_path_contains":
-			ruleSet.Implementation.MockPathContains = append(ruleSet.Implementation.MockPathContains, value)
+		return setLayerScalar(state.currentLayer, key, value)
+	case "ignore":
+		switch {
+		case indent == 2 && key == "standard_library":
+			ruleSet.Ignore.StandardLibrary = parseBool(value)
+			return nil
+		case indent == 4 && state.ignoreGroup == "getters" && key == "local_values":
+			ruleSet.Ignore.Getters.LocalValues = parseBool(value)
+			return nil
 		default:
-			return fmt.Errorf("unknown implementation list %q", key)
+			return fmt.Errorf("unknown ignore scalar %q", key)
 		}
 	default:
-		return fmt.Errorf("unknown list section %q", section)
+		return fmt.Errorf("unknown scalar section %q", state.section)
+	}
+}
+
+func setHandlerSignatureScalar(signature *HandlerSignatureRules, key string, value string) error {
+	switch key {
+	case "require_context_first_arg":
+		signature.RequireContextFirstArg = parseBool(value)
+	case "require_pointer_request":
+		signature.RequirePointerRequest = parseBool(value)
+	case "require_pointer_response":
+		signature.RequirePointerResponse = parseBool(value)
+	case "require_error_return":
+		signature.RequireErrorReturn = parseBool(value)
+	default:
+		return fmt.Errorf("unknown handler signature key %q", key)
+	}
+	return nil
+}
+
+func setLayerScalar(layer *LayerRule, key string, value string) error {
+	switch key {
+	case "name":
+		layer.Name = value
+	default:
+		return fmt.Errorf("unknown layer key %q", key)
+	}
+	return nil
+}
+
+func addListItem(ruleSet *RuleSet, state *parserState, indent int, value string) error {
+	value = cleanValue(value)
+	if state.section == "layers" && indent == 2 {
+		layer := LayerRule{}
+		if value != "" {
+			key, scalar, ok := strings.Cut(value, ":")
+			if !ok {
+				return fmt.Errorf("unsupported layer item %q", value)
+			}
+			if err := setLayerScalar(&layer, strings.TrimSpace(key), cleanValue(scalar)); err != nil {
+				return err
+			}
+		}
+		ruleSet.Layers = append(ruleSet.Layers, layer)
+		state.currentLayer = &ruleSet.Layers[len(ruleSet.Layers)-1]
+		state.layerGroup = ""
+		state.listKey = ""
+		return nil
+	}
+
+	if state.listKey == "" {
+		return fmt.Errorf("list value %q without list key", value)
+	}
+	switch state.section {
+	case "handlers":
+		return addHandlerListValue(&ruleSet.Handlers, state.handlerGroup, state.listKey, value)
+	case "layers":
+		if state.currentLayer == nil || state.layerGroup != "match" {
+			return fmt.Errorf("layer list value %q without match group", value)
+		}
+		return addLayerListValue(state.currentLayer, state.listKey, value)
+	case "ignore":
+		return addIgnoreListValue(&ruleSet.Ignore, state.ignoreGroup, state.listKey, value)
+	case "resolution":
+		return addResolutionListValue(&ruleSet.Resolution, state.resolutionGroup, state.listKey, value)
+	default:
+		return fmt.Errorf("unknown list section %q", state.section)
+	}
+}
+
+func addHandlerListValue(handlers *HandlerRules, group string, key string, value string) error {
+	if group != "match" {
+		return fmt.Errorf("handler list %q must be under match", key)
+	}
+	switch key {
+	case "package_names":
+		handlers.Match.PackageNames = append(handlers.Match.PackageNames, value)
+	case "file_path_contains":
+		handlers.Match.FilePathContains = append(handlers.Match.FilePathContains, value)
+	default:
+		return fmt.Errorf("unknown handler match list %q", key)
+	}
+	return nil
+}
+
+func addLayerListValue(layer *LayerRule, key string, value string) error {
+	switch key {
+	case "call_name_contains":
+		layer.Match.CallNameContains = append(layer.Match.CallNameContains, value)
+	case "receiver_type_contains":
+		layer.Match.ReceiverTypeContains = append(layer.Match.ReceiverTypeContains, value)
+	case "file_path_contains":
+		layer.Match.FilePathContains = append(layer.Match.FilePathContains, value)
+	case "method_name_prefixes":
+		layer.Match.MethodNamePrefixes = append(layer.Match.MethodNamePrefixes, value)
+	case "method_name_contains":
+		layer.Match.MethodNameContains = append(layer.Match.MethodNameContains, value)
+	default:
+		return fmt.Errorf("unknown layer match list %q", key)
+	}
+	return nil
+}
+
+func addIgnoreListValue(ignore *IgnoreRules, group string, key string, value string) error {
+	switch group {
+	case "calls":
+		switch key {
+		case "full_names":
+			ignore.Calls.FullNames = append(ignore.Calls.FullNames, value)
+		case "package_names":
+			ignore.Calls.PackageNames = append(ignore.Calls.PackageNames, value)
+		case "method_names":
+			ignore.Calls.MethodNames = append(ignore.Calls.MethodNames, value)
+		case "method_name_prefixes":
+			ignore.Calls.MethodNamePrefixes = append(ignore.Calls.MethodNamePrefixes, value)
+		case "full_name_prefixes":
+			ignore.Calls.FullNamePrefixes = append(ignore.Calls.FullNamePrefixes, value)
+		default:
+			return fmt.Errorf("unknown ignore calls list %q", key)
+		}
+	case "getters":
+		if key != "receiver_names" {
+			return fmt.Errorf("unknown ignore getters list %q", key)
+		}
+		ignore.Getters.ReceiverNames = append(ignore.Getters.ReceiverNames, value)
+	default:
+		return fmt.Errorf("unknown ignore group %q", group)
+	}
+	return nil
+}
+
+func addResolutionListValue(resolution *ResolutionRules, group string, key string, value string) error {
+	if group != "skip_implementations" {
+		return fmt.Errorf("unknown resolution group %q", group)
+	}
+	switch key {
+	case "receiver_name_prefixes":
+		resolution.SkipImplementations.ReceiverNamePrefixes = append(resolution.SkipImplementations.ReceiverNamePrefixes, value)
+	case "file_path_contains":
+		resolution.SkipImplementations.FilePathContains = append(resolution.SkipImplementations.FilePathContains, value)
+	default:
+		return fmt.Errorf("unknown resolution skip_implementations list %q", key)
 	}
 	return nil
 }
