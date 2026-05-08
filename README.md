@@ -56,6 +56,25 @@ for another tool:
 calltrail-go ./... --rpc GetFoo --format json
 ```
 
+## Examples
+
+This repository includes small Go examples that double as regression fixtures.
+
+Run the generic gRPC-style example with the built-in rules:
+
+```sh
+go run ./cmd/calltrail-go ./examples/grpc-basic --rpc GetBook --depth 3
+```
+
+Run the custom-layer example with its project config:
+
+```sh
+go run ./cmd/calltrail-go ./examples/custom-layers \
+  --config ./examples/custom-layers/.calltrail.yaml \
+  --rpc PublishArticle \
+  --depth 3
+```
+
 ## What It Detects
 
 `calltrail-go` currently detects methods shaped like this:

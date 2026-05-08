@@ -96,3 +96,48 @@ func TestWriteMarkdownSummarizesRepositoryOperations(t *testing.T) {
 		t.Fatalf("markdown output includes internal repository helper:\n%s", got)
 	}
 }
+
+func TestWriteMarkdownDoesNotTreatViaOnlyCallAsImplementation(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name: "CreateFoo",
+			Kind: "grpc",
+			Entrypoint: model.Entrypoint{
+				Symbol: "Server.CreateFoo",
+				File:   "handler.go",
+				Line:   10,
+			},
+			Request:  model.TypeRef{Type: "*pb.CreateFooRequest"},
+			Response: model.TypeRef{Type: "*pb.Foo"},
+			Trail: model.Trail{
+				Layers: []model.LayerCalls{
+					{
+						Name: "usecase",
+						Calls: []model.CallRef{
+							{Symbol: "fooUsecase.CreateFoo", Receiver: "fooUsecase", Method: "CreateFoo", File: "usecase.go", Line: 18, Depth: 2, Via: "s.fooUsecase.CreateFoo"},
+						},
+					},
+					{
+						Name: "repository",
+						Calls: []model.CallRef{
+							{Symbol: "repository.IsNotFoundError", Receiver: "repository", Method: "IsNotFoundError", File: "usecase.go", Line: 40, Depth: 2, Via: "fooUsecase.CreateFoo"},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	want := "- `repository.IsNotFoundError`\n  - called from: `fooUsecase.CreateFoo` (usecase.go:18)"
+	if !strings.Contains(got, want) {
+		t.Fatalf("markdown output does not contain %q:\n%s", want, got)
+	}
+	if strings.Contains(got, "implementation: usecase.go:40") {
+		t.Fatalf("markdown output treats callsite as implementation:\n%s", got)
+	}
+}

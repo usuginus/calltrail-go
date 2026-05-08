@@ -80,10 +80,8 @@ func buildOperationSummary(
 		return operation, true
 	case call.Via != "":
 		operation := operationSummary{
-			Symbol:            call.Symbol,
-			Implementation:    call,
-			HasImplementation: true,
-			CalledFrom:        viaCallsite(call.Via, firstCallBySymbol),
+			Symbol:     call.Symbol,
+			CalledFrom: viaCallsite(call.Via, firstCallBySymbol),
 		}
 		return operation, true
 	default:

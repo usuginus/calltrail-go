@@ -149,6 +149,62 @@ func TestAnalyzeUsesConfiguredLayerNameInTrail(t *testing.T) {
 	}
 }
 
+func TestAnalyzeGRPCBasicExample(t *testing.T) {
+	flows, err := Analyze([]string{"../../examples/grpc-basic"}, Options{Depth: 3})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	if flow.Name != "GetBook" {
+		t.Fatalf("flow.Name = %q, want GetBook", flow.Name)
+	}
+	if !hasCall(flow.Trail.LayerCalls("usecase"), "catalogUsecase.GetBook") {
+		t.Fatalf("usecase layer = %#v, want catalogUsecase.GetBook", flow.Trail.LayerCalls("usecase"))
+	}
+	if !hasCall(flow.Trail.LayerCalls("repository"), "bookRepository.FindBook") {
+		t.Fatalf("repository layer = %#v, want bookRepository.FindBook", flow.Trail.LayerCalls("repository"))
+	}
+	if !hasCall(flow.Trail.LayerCalls("converter"), "bookConverter.ToResponse") {
+		t.Fatalf("converter layer = %#v, want bookConverter.ToResponse", flow.Trail.LayerCalls("converter"))
+	}
+}
+
+func TestAnalyzeCustomLayersExample(t *testing.T) {
+	ruleSet, err := rules.Load("../../examples/custom-layers/.calltrail.yaml")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	flows, err := Analyze([]string{"../../examples/custom-layers"}, Options{
+		Depth: 3,
+		Rules: ruleSet,
+	})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	if flow.Name != "PublishArticle" {
+		t.Fatalf("flow.Name = %q, want PublishArticle", flow.Name)
+	}
+	for layer, symbol := range map[string]string{
+		"application":     "articleApplication.PublishArticle",
+		"domain":          "articlePolicy.Validate",
+		"persistence":     "articleStore.Insert",
+		"external_client": "searchIndexClient.Index",
+	} {
+		if !hasCall(flow.Trail.LayerCalls(layer), symbol) {
+			t.Fatalf("%s layer = %#v, want %s", layer, flow.Trail.LayerCalls(layer), symbol)
+		}
+	}
+}
+
 func TestClassifyUsesReceiverTypeBeforeCurrentFilePath(t *testing.T) {
 	ruleSet, err := rules.Load("")
 	if err != nil {
