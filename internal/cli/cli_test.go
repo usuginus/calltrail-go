@@ -103,6 +103,7 @@ func TestRunNoHandlersWritesDiagnostics(t *testing.T) {
 		"calltrail-go: no handlers found",
 		"scanned_go_files: 1",
 		"handler package_names: grpc",
+		"rules: built-in generic",
 		"calltrail-go " + dir + " --list",
 	} {
 		if !strings.Contains(got, want) {

@@ -1,0 +1,255 @@
+# calltrail-go configuration.
+#
+# If this file is copied to .calltrail.yaml, it replaces the built-in generic
+# rules. Keep the active rules small, then uncomment aliases that match your
+# project's architecture vocabulary.
+version: 1
+
+# Which functions should be treated as RPC/API handlers.
+handlers:
+  match:
+    package_names:
+      - grpc
+      # Entrypoint package aliases:
+      # - handler
+      # - handlers
+      # - controller
+      # - controllers
+      # - transport
+
+    file_path_contains:
+      - /grpc/
+      # Entrypoint path aliases:
+      # - /handler/
+      # - /handlers/
+      # - /controller/
+      # - /controllers/
+      # - /transport/
+      # - /adapter/
+      # - /adapters/
+      # - /delivery/
+      # - /api/
+
+  signature:
+    # Typical gRPC shape:
+    # func (s *Service) Method(ctx context.Context, req *Request) (*Response, error)
+    require_context_first_arg: true
+    require_pointer_request: true
+    require_pointer_response: true
+    require_error_return: true
+
+# Calls are assigned to the first matching layer.
+#
+# Layer names are free-form. The name is used directly as the Markdown section
+# title and JSON layer name.
+layers:
+  - name: usecase
+    match:
+      call_name_contains:
+        - usecase
+      receiver_type_contains:
+        - usecase
+      file_path_contains:
+        - /usecase/
+        - /usecases/
+
+  # Application-layer example:
+  # - name: application
+  #   match:
+  #     call_name_contains:
+  #       - application
+  #       - interactor
+  #     receiver_type_contains:
+  #       - application
+  #       - interactor
+  #     file_path_contains:
+  #       - /application/
+  #       - /interactor/
+  #       - /interactors/
+
+  - name: service
+    match:
+      call_name_contains:
+        - service
+      receiver_type_contains:
+        - service
+      file_path_contains:
+        - /service/
+        - /services/
+
+  # Domain-service aliases:
+  # - name: service
+  #   match:
+  #     call_name_contains:
+  #       - domainservice
+  #       - domain_service
+  #     receiver_type_contains:
+  #       - domainservice
+  #     file_path_contains:
+  #       - /domain/service/
+  #       - /domain/services/
+
+  - name: repository
+    match:
+      call_name_contains:
+        - repository
+      receiver_type_contains:
+        - repository
+      file_path_contains:
+        - /repository/
+        - /repositories/
+
+  # Persistence aliases:
+  # - name: repository
+  #   match:
+  #     call_name_contains:
+  #       - persistence
+  #       - dao
+  #     receiver_type_contains:
+  #       - persistence
+  #       - dao
+  #     file_path_contains:
+  #       - /persistence/
+  #       - /dao/
+
+  - name: external_client
+    match:
+      call_name_contains:
+        - client
+      receiver_type_contains:
+        - client
+      file_path_contains:
+        - /client/
+        - /clients/
+
+  # External-boundary aliases:
+  # - name: external_client
+  #   match:
+  #     call_name_contains:
+  #       - gateway
+  #       - integration
+  #       - provider
+  #     receiver_type_contains:
+  #       - gateway
+  #       - integration
+  #       - provider
+  #     file_path_contains:
+  #       - /gateway/
+  #       - /gateways/
+  #       - /integration/
+  #       - /integrations/
+  #       - /provider/
+  #       - /providers/
+
+  - name: converter
+    match:
+      call_name_contains:
+        - converter
+      receiver_type_contains:
+        - converter
+      file_path_contains:
+        - /converter/
+        - /converters/
+      method_name_prefixes:
+        - convert
+
+  # Mapping aliases:
+  # - name: converter
+  #   match:
+  #     call_name_contains:
+  #       - mapper
+  #       - presenter
+  #       - transformer
+  #     receiver_type_contains:
+  #       - mapper
+  #       - presenter
+  #       - transformer
+  #     file_path_contains:
+  #       - /mapper/
+  #       - /mappers/
+  #       - /presenter/
+  #       - /presenters/
+  #       - /transformer/
+  #       - /transformers/
+  #     method_name_prefixes:
+  #       - map
+  #     method_name_contains:
+  #       - toentity
+  #       - todomain
+  #       - todto
+  #       - torequest
+  #       - toresponse
+
+  - name: model
+    match:
+      call_name_contains:
+        - model.
+      receiver_type_contains:
+        - model
+      file_path_contains:
+        - /model/
+        - /models/
+
+  # Domain-model aliases:
+  # - name: model
+  #   match:
+  #     call_name_contains:
+  #       - entity.
+  #       - valueobject.
+  #       - aggregate.
+  #     receiver_type_contains:
+  #       - entity
+  #       - valueobject
+  #       - aggregate
+  #     file_path_contains:
+  #       - /entity/
+  #       - /entities/
+  #       - /valueobject/
+  #       - /valueobjects/
+  #       - /aggregate/
+  #       - /aggregates/
+
+# Calls that should not appear in the trail.
+ignore:
+  # Automatically ignore calls made through imported standard-library packages.
+  standard_library: true
+
+  calls:
+    full_names:
+      - err.Error
+      - context.Background
+      - context.TODO
+    package_names:
+      - status
+    method_names:
+      - Close
+      - GRPCStatus
+      - IsZero
+      - Nanosecond
+      - Unix
+
+  getters:
+    # Ignore local value getters such as req.GetID() when req has no known type.
+    local_values: true
+    receiver_names:
+      - in
+      - req
+      - request
+      - resp
+      - response
+
+# Implementation candidates that should not be followed when --depth is greater
+# than 1.
+resolution:
+  skip_implementations:
+    receiver_name_prefixes:
+      - Mock
+      - Fake
+    file_path_contains:
+      - /mock/
+      - /mocks/
+      - /fake/
+      - /fakes/
+      # Test fixture aliases:
+      # - /testdata/
+      # - /fixtures/

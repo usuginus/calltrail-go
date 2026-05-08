@@ -68,8 +68,7 @@ For each handler, it extracts:
 
 - handler symbol, file, and line
 - request and response types
-- downstream usecase, service, repository, external client, converter, async,
-  model, and notable calls
+- downstream calls grouped by configured layers, plus async and notable calls
 - gRPC status codes returned via `status.Error` and `status.Errorf`
 
 With `--depth` greater than 1, `calltrail-go` follows implementation candidates
@@ -82,7 +81,7 @@ var _ FooUsecase = (*fooUsecase)(nil)
 It can also resolve common syntax-driven patterns when the relevant code is
 visible to the analyzer:
 
-- nested struct fields such as `u.repos.Foo.Find`
+- nested struct fields such as `u.repositories.Foo.Find`
 - local variables initialized from constructors, such as `uc := NewUsecase()`
 - chained constructor calls, such as `NewUsecase().Run(ctx)`
 
@@ -94,7 +93,7 @@ visible to the analyzer:
 2. Build a lightweight project index of functions, methods, struct fields,
    interfaces, and implementation assertions.
 3. Detect handlers using configurable rules.
-4. Follow calls up to `--depth` using local type inference and classifier rules.
+4. Follow calls up to `--depth` using local type inference and layer rules.
 5. Render a compact summary for humans, or raw JSON for tools.
 
 It does not run `go list`, compile packages, or load external dependencies.
@@ -112,22 +111,23 @@ stays readable.
 ## GetFoo
 
 - kind: `grpc`
-- handler: `Server.GetFoo` (internal/driver/grpc/foo.go:12)
+- handler: `Server.GetFoo` (internal/adapter/grpc/foo.go:12)
 - request: `*pb.GetFooRequest`
 - response: `*pb.GetFooResponse`
 
-### Usecases
+### usecase
 - `fooUsecase.GetFoo`
-  - called from: `s.fooUsecase.GetFoo` (internal/driver/grpc/foo.go:18)
+  - called from: `s.fooUsecase.GetFoo` (internal/adapter/grpc/foo.go:18)
   - implementation: internal/usecase/foo.go:20
 
-### Repositories
+### repository
 - `FooRepository.FindFoo`
-  - called from: `u.repos.Foo.FindFoo` (internal/usecase/foo.go:24)
-  - implementation: internal/domain/repository/foo_repository.go:30
+  - called from: `u.repositories.Foo.FindFoo` (internal/usecase/foo.go:24)
+  - implementation: internal/repository/foo_repository.go:30
 ```
 
-JSON output keeps the raw trail data:
+JSON output keeps the raw trail data, including free-form layer names under
+`trail.layers`:
 
 ```sh
 calltrail-go ./... --rpc GetFoo --format json
@@ -135,45 +135,59 @@ calltrail-go ./... --rpc GetFoo --format json
 
 ## Configuration
 
-`calltrail-go` uses rule presets for handler detection, call classification, and
-utility-call filtering. The built-in `generic` preset is stored as data and read
-through the same rule loader as project configuration.
+By default, `calltrail-go` uses conservative built-in generic rules for handler
+detection, call classification, and utility-call filtering.
 
 If `--config` is omitted, `calltrail-go` looks for `.calltrail.yaml` from each
-target path upward.
+target path upward. When a config file is found, it replaces the built-in
+generic rules instead of merging with them.
 
 ```sh
 calltrail-go ./... --config .calltrail.yaml
 ```
 
+Start from `calltrail.example.yaml` when creating a project config. Because
+project config replaces the built-in rules, keep the active rules small and
+uncomment only the architecture aliases that match your project.
+
 Example:
 
 ```yaml
+version: 1
+
 handlers:
-  package_names:
-    - grpc
-  path_contains:
-    - /transport/
+  match:
+    package_names:
+      - grpc
+    file_path_contains:
+      - /grpc/
+  signature:
+    require_context_first_arg: true
+    require_pointer_request: true
+    require_pointer_response: true
+    require_error_return: true
 
-ignore_calls:
-  auto_stdlib: true
-  packages:
-    - log
-  symbols:
-    - helper.Noop
+layers:
+  - name: application
+    match:
+      file_path_contains:
+        - /application/
+  - name: repository
+    match:
+      receiver_type_contains:
+        - repository
 
-classifiers:
-  - layer: usecase
-    path_contains:
-      - /application/
-  - layer: repository
-    type_contains:
-      - repository
+ignore:
+  standard_library: true
+  calls:
+    full_names:
+      - context.Background
 ```
 
-The `generic` preset auto-ignores calls made through standard-library package
-imports. For example, `encoding/json` is ignored through the actual local import
-name such as `json.Marshal`, and aliased imports are handled as well.
+The built-in generic rules auto-ignore calls made through standard-library
+package imports. For example, `encoding/json` is ignored through the actual
+local import name such as `json.Marshal`, and aliased imports are handled as
+well.
 
 ## Flags
 
@@ -182,7 +196,6 @@ name such as `json.Marshal`, and aliased imports are handled as well.
 --list             list detected handlers and exit
 --depth int        call extraction depth (default 3)
 --format string    output format: markdown or json (default markdown)
---preset string    rule preset (default generic)
 --config string    path to .calltrail.yaml
 ```
 
@@ -213,30 +226,46 @@ rules:
 - first return value is a pointer response
 - second return value is `error`
 
-If your project uses a different layout, add `.calltrail.yaml`:
+If your project uses a different layout, copy `calltrail.example.yaml` and
+tune `handlers.match`:
 
 ```yaml
+version: 1
+
 handlers:
-  path_contains:
-    - /transport/
-    - /handler/
+  match:
+    file_path_contains:
+      - /handler/
+      - /transport/
+  signature:
+    require_context_first_arg: true
+    require_pointer_request: true
+    require_pointer_response: true
+    require_error_return: true
 ```
 
 When no handlers are found, `calltrail-go` prints diagnostics to stderr,
-including scanned Go file count, active preset/config, and handler rules.
+including scanned Go file count, active rules, and handler rules.
 
 ### Calls are classified as Unknown
 
-Add or tune classifier rules in `.calltrail.yaml`:
+Add or tune `layers` in `.calltrail.yaml`. A layer's `name` is free-form and is
+used directly in Markdown and JSON output:
 
 ```yaml
-classifiers:
-  - layer: usecase
-    path_contains:
-      - /application/
-  - layer: repository
-    type_contains:
-      - store
+version: 1
+
+layers:
+  - name: application
+    match:
+      call_name_contains:
+        - usecase
+      file_path_contains:
+        - /application/
+  - name: repository
+    match:
+      receiver_type_contains:
+        - repository
 ```
 
 ## Roadmap

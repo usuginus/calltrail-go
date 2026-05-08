@@ -20,14 +20,13 @@ func writeNoResults(stderr io.Writer, opts Options, ruleSet rules.RuleSet) {
 	}
 	fmt.Fprintf(stderr, "  paths: %s\n", strings.Join(opts.Paths, ", "))
 	fmt.Fprintf(stderr, "  scanned_go_files: %d\n", fileCount)
-	fmt.Fprintf(stderr, "  preset: %s\n", opts.Preset)
 	if opts.Config == "" {
-		fmt.Fprintln(stderr, "  config: (none)")
+		fmt.Fprintln(stderr, "  rules: built-in generic")
 	} else {
-		fmt.Fprintf(stderr, "  config: %s\n", opts.Config)
+		fmt.Fprintf(stderr, "  rules: %s\n", opts.Config)
 	}
-	fmt.Fprintf(stderr, "  handler package_names: %s\n", listOrNone(ruleSet.Handlers.PackageNames))
-	fmt.Fprintf(stderr, "  handler path_contains: %s\n", listOrNone(ruleSet.Handlers.PathContains))
+	fmt.Fprintf(stderr, "  handler package_names: %s\n", listOrNone(ruleSet.Handlers.Match.PackageNames))
+	fmt.Fprintf(stderr, "  handler file_path_contains: %s\n", listOrNone(ruleSet.Handlers.Match.FilePathContains))
 	fmt.Fprintln(stderr, "Try:")
 	fmt.Fprintf(stderr, "  calltrail-go %s --list\n", strings.Join(opts.Paths, " "))
 	fmt.Fprintln(stderr, "  calltrail-go <path> --config .calltrail.yaml")
