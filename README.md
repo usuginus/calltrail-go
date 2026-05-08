@@ -84,6 +84,16 @@ go run ./cmd/calltrail-go ./examples/branch-dispatch \
   --depth 3
 ```
 
+Run the map-dispatch example to see static dispatch tables such as
+`map[Kind]Processor`:
+
+```sh
+go run ./cmd/calltrail-go ./examples/map-dispatch \
+  --config ./examples/map-dispatch/.calltrail.yaml \
+  --rpc ProcessDocument \
+  --depth 4
+```
+
 ## What It Detects
 
 `calltrail-go` currently detects methods shaped like this:
@@ -98,6 +108,7 @@ For each handler, it extracts:
 - request and response types
 - downstream calls grouped by configured layers, plus async and notable calls
 - interface-typed calls and the implementation candidates inferred for them
+- static map-dispatch calls such as `processor := a.processors[kind]`
 - branch-specific calls for `switch` and `type switch` statements
 - gRPC status codes returned via `status.Error` and `status.Errorf`
 
@@ -114,6 +125,8 @@ visible to the analyzer:
 - nested struct fields such as `u.repositories.Foo.Find`
 - local variables initialized from constructors, such as `uc := NewUsecase()`
 - chained constructor calls, such as `NewUsecase().Run(ctx)`
+- static dispatch tables stored in struct fields, such as
+  `handlers: map[Kind]Handler{KindA: newKindAHandler()}`
 
 ## How It Works
 
@@ -132,10 +145,11 @@ repositories, at the cost of some precision versus a full type checker.
 
 ## Output
 
-Markdown output is summarized by operation. Repeated calls to the same
+Markdown output is summarized for reading. Repeated calls to the same
 implementation are deduplicated and grouped under one operation with all call
-sites. Low-level internal helper calls are omitted from Markdown so the output
-stays readable.
+sites. Layer names come directly from the active rules, unresolved interface
+calls are separated, and unexported helper calls are omitted so the output stays
+readable without project-specific presentation rules baked into the binary.
 
 ```markdown
 ## GetFoo
@@ -155,13 +169,33 @@ stays readable.
   - called from: `u.repositories.Foo.FindFoo` (internal/usecase/foo.go:24)
   - implementation: internal/repository/foo_repository.go:30
 
+### external_client
+- `fooClient.GetFoo`
+  - called from: `u.fooClient.GetFoo` (internal/usecase/foo.go:28)
+  - implementation: internal/client/foo.go:30
+
 ### Interface Calls
 - `s.fooUsecase.GetFoo` (internal/adapter/grpc/foo.go:18)
   - interface: `FooUsecase`
   - candidates:
     - `fooUsecase.GetFoo` (internal/usecase/foo.go:20) expanded
 
+### Dispatches
+- `processor.Process` dispatched from `u.processors[cmd.Kind]` (internal/usecase/foo.go:42)
+  - interface: `FooProcessor`
+  - case `KindCached`
+    - application: `cachedProcessor.Process`
+    - repository: `FooCacheRepository.FindFoo`
+  - case `KindRemote`
+    - application: `remoteProcessor.Process`
+    - external_client: `FooClient.GetFoo`
+
 ### Branches
+- `Server.GetFoo` type switch `req.Payload.(type)` (internal/adapter/grpc/foo.go:16)
+  - case `*pb.GetFooRequest_V1`
+    - usecase: `fooUsecase.GetFoo`
+  - default
+    - other: `errors.NewInvalidArgumentErr`
 - `fooUsecase.GetFoo` switch `req.Kind` (internal/usecase/foo.go:36)
   - case `"cached"`
     - repository: `FooCacheRepository.FindFoo`
@@ -171,7 +205,7 @@ stays readable.
 
 JSON output keeps the raw trail data, including free-form layer names under
 `trail.layers`, interface candidate details under `trail.interface_calls`, and
-branch details under `trail.branches`:
+dispatch and branch details under `trail.dispatches` and `trail.branches`:
 
 ```sh
 calltrail-go ./... --rpc GetFoo --format json

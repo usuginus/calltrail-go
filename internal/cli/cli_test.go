@@ -144,6 +144,42 @@ func TestRunJSONOutputsBranchDetails(t *testing.T) {
 	}
 }
 
+func TestRunJSONOutputsDispatchDetails(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Run([]string{
+		"../../examples/map-dispatch",
+		"--config", "../../examples/map-dispatch/.calltrail.yaml",
+		"--rpc", "ProcessDocument",
+		"--depth", "4",
+		"--format", "json",
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var flows []model.APIFlow
+	if err := json.Unmarshal(stdout.Bytes(), &flows); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+	dispatches := flows[0].Trail.Dispatches
+	if len(dispatches) != 1 {
+		t.Fatalf("dispatches = %#v, want 1 dispatch", dispatches)
+	}
+	if dispatches[0].Table != "a.processors" || dispatches[0].Key != "cmd.Kind" {
+		t.Fatalf("dispatch lookup = %s[%s], want a.processors[cmd.Kind]", dispatches[0].Table, dispatches[0].Key)
+	}
+	if len(dispatches[0].Cases) != 2 {
+		t.Fatalf("dispatch cases = %#v, want 2 cases", dispatches[0].Cases)
+	}
+}
+
 func TestParseClampsInvalidDepth(t *testing.T) {
 	var stderr bytes.Buffer
 	opts, err := Parse([]string{"--depth", "0"}, &stderr)

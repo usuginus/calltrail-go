@@ -19,7 +19,8 @@ func WriteMarkdown(w io.Writer, flows []model.APIFlow) error {
 			writeOperations(w, layer.Name, layer.Calls, allCalls)
 		}
 		writeInterfaceCalls(w, flow.Trail.InterfaceCalls)
-		writeBranches(w, flow.Trail.Branches)
+		writeDispatches(w, flow.Trail.Dispatches)
+		writeBranches(w, flow)
 		writeCalls(w, "Async", dedupeCalls(flow.Trail.Async))
 		writeCalls(w, "Other Notable Calls", summarizeUnknown(flow.Trail.Unknown, operationCallsiteSymbols(flow)))
 		writeErrorCodes(w, flow.Errors.GRPCCodes)
@@ -104,18 +105,33 @@ func writeRelatedCalls(w io.Writer, calls []model.CallRef) {
 
 func writeInterfaceCalls(w io.Writer, calls []model.InterfaceCallTrace) {
 	calls = summarizeInterfaceCalls(calls)
-	if len(calls) == 0 {
+	resolved, unresolved := splitInterfaceCalls(calls)
+	if len(resolved) == 0 && len(unresolved) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "### Interface Calls")
-	for _, call := range calls {
+	if len(resolved) > 0 {
+		fmt.Fprintln(w, "### Interface Calls")
+	}
+	for _, call := range resolved {
 		writeInterfaceCallHeader(w, call)
 		if call.Interface != "" {
 			fmt.Fprintf(w, "  - interface: `%s`\n", call.Interface)
 		}
 		writeInterfaceImplementations(w, call.Implementations)
 	}
-	fmt.Fprintln(w)
+	if len(resolved) > 0 {
+		fmt.Fprintln(w)
+	}
+	if len(unresolved) > 0 {
+		fmt.Fprintln(w, "### Unresolved Interface Calls")
+		for _, call := range unresolved {
+			writeInterfaceCallHeader(w, call)
+			if call.Interface != "" {
+				fmt.Fprintf(w, "  - interface: `%s`\n", call.Interface)
+			}
+		}
+		fmt.Fprintln(w)
+	}
 }
 
 func writeInterfaceCallHeader(w io.Writer, trace model.InterfaceCallTrace) {
@@ -149,7 +165,7 @@ func writeInterfaceImplementations(w io.Writer, implementations []model.Implemen
 func summarizeInterfaceCalls(calls []model.InterfaceCallTrace) []model.InterfaceCallTrace {
 	var out []model.InterfaceCallTrace
 	for _, call := range calls {
-		if isLowSignalInterfaceCall(call) {
+		if hasOnlyInternalHelperImplementations(call) {
 			continue
 		}
 		out = append(out, call)
@@ -157,14 +173,20 @@ func summarizeInterfaceCalls(calls []model.InterfaceCallTrace) []model.Interface
 	return out
 }
 
-func isLowSignalInterfaceCall(trace model.InterfaceCallTrace) bool {
-	method := strings.ToLower(trace.Call.Method)
-	if method == "now" || strings.Contains(method, "timestamp") {
-		return true
+func splitInterfaceCalls(calls []model.InterfaceCallTrace) ([]model.InterfaceCallTrace, []model.InterfaceCallTrace) {
+	var resolved []model.InterfaceCallTrace
+	var unresolved []model.InterfaceCallTrace
+	for _, call := range calls {
+		if len(call.Implementations) == 0 {
+			unresolved = append(unresolved, call)
+			continue
+		}
+		resolved = append(resolved, call)
 	}
-	if strings.Contains(strings.ToLower(trace.Interface), "clock") {
-		return true
-	}
+	return resolved, unresolved
+}
+
+func hasOnlyInternalHelperImplementations(trace model.InterfaceCallTrace) bool {
 	if len(trace.Implementations) == 0 {
 		return false
 	}
@@ -176,12 +198,96 @@ func isLowSignalInterfaceCall(trace model.InterfaceCallTrace) bool {
 	return true
 }
 
-func writeBranches(w io.Writer, branches []model.BranchTrace) {
-	if len(branches) == 0 {
+func writeDispatches(w io.Writer, dispatches []model.DispatchTrace) {
+	if len(dispatches) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "### Dispatches")
+	for _, dispatch := range dispatches {
+		writeDispatchHeader(w, dispatch)
+		if dispatch.Interface != "" {
+			fmt.Fprintf(w, "  - interface: `%s`\n", dispatch.Interface)
+		}
+		for _, dispatchCase := range dispatch.Cases {
+			fmt.Fprintf(w, "  - %s\n", dispatchCaseTitle(dispatchCase))
+			writeDispatchCaseLayers(w, dispatchCase)
+			writeDispatchCaseUnknown(w, dispatchCase)
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+func writeDispatchHeader(w io.Writer, dispatch model.DispatchTrace) {
+	call := dispatch.Call
+	if call.File == "" {
+		fmt.Fprintf(w, "- `%s` dispatched from `%s`\n", call.Symbol, dispatchLookupDisplay(dispatch))
+		return
+	}
+	fmt.Fprintf(w, "- `%s` dispatched from `%s` (%s:%d)\n", call.Symbol, dispatchLookupDisplay(dispatch), call.File, call.Line)
+}
+
+func dispatchLookupDisplay(dispatch model.DispatchTrace) string {
+	if dispatch.Key == "" {
+		return dispatch.Table
+	}
+	return dispatch.Table + "[" + dispatch.Key + "]"
+}
+
+func writeDispatchCaseLayers(w io.Writer, dispatchCase model.DispatchCase) {
+	allCalls := dispatchCaseCalls(dispatchCase)
+	for _, layer := range dispatchCase.Layers {
+		operations := summarizeOperations(layer.Calls, allCalls)
+		if len(operations) == 0 {
+			continue
+		}
+		if len(operations) == 1 {
+			fmt.Fprintf(w, "    - %s: `%s`\n", layer.Name, operations[0].Symbol)
+			continue
+		}
+		fmt.Fprintf(w, "    - %s:\n", layer.Name)
+		for _, operation := range operations {
+			fmt.Fprintf(w, "      - `%s`\n", operation.Symbol)
+		}
+	}
+}
+
+func writeDispatchCaseUnknown(w io.Writer, dispatchCase model.DispatchCase) {
+	unknown := summarizeUnknown(dispatchCase.Unknown, map[string]bool{})
+	if len(unknown) == 0 {
+		return
+	}
+	if len(unknown) == 1 {
+		fmt.Fprintf(w, "    - other: `%s`\n", unknown[0].Symbol)
+		return
+	}
+	fmt.Fprintln(w, "    - other:")
+	for _, call := range unknown {
+		fmt.Fprintf(w, "      - `%s`\n", call.Symbol)
+	}
+}
+
+func dispatchCaseCalls(dispatchCase model.DispatchCase) []model.CallRef {
+	var calls []model.CallRef
+	for _, layer := range dispatchCase.Layers {
+		calls = append(calls, layer.Calls...)
+	}
+	calls = append(calls, dispatchCase.Unknown...)
+	return calls
+}
+
+func dispatchCaseTitle(dispatchCase model.DispatchCase) string {
+	if len(dispatchCase.Labels) == 0 {
+		return "case"
+	}
+	return "case `" + strings.Join(dispatchCase.Labels, "`, `") + "`"
+}
+
+func writeBranches(w io.Writer, flow model.APIFlow) {
+	if len(flow.Trail.Branches) == 0 {
 		return
 	}
 	fmt.Fprintln(w, "### Branches")
-	for _, branch := range branches {
+	for _, branch := range flow.Trail.Branches {
 		writeBranchHeader(w, branch)
 		for _, branchCase := range branch.Cases {
 			fmt.Fprintf(w, "  - %s\n", branchCaseTitle(branchCase))

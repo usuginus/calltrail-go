@@ -53,3 +53,19 @@ func TestBranchCaseAppendLayerCallKeepsConfiguredOrder(t *testing.T) {
 		t.Fatalf("second layer = %q, want persistence", got)
 	}
 }
+
+func TestDispatchCaseAppendLayerCallKeepsConfiguredOrder(t *testing.T) {
+	var dispatchCase DispatchCase
+	dispatchCase.AppendLayerCall("external_client", CallRef{Symbol: "client.Send"}, []string{"application", "external_client"})
+	dispatchCase.AppendLayerCall("application", CallRef{Symbol: "handler.Process"}, []string{"application", "external_client"})
+
+	if len(dispatchCase.Layers) != 2 {
+		t.Fatalf("layers = %d, want 2", len(dispatchCase.Layers))
+	}
+	if got := dispatchCase.Layers[0].Name; got != "application" {
+		t.Fatalf("first layer = %q, want application", got)
+	}
+	if got := dispatchCase.Layers[1].Name; got != "external_client" {
+		t.Fatalf("second layer = %q, want external_client", got)
+	}
+}

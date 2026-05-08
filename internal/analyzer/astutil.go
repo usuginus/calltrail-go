@@ -47,6 +47,8 @@ func typeString(expr ast.Expr) string {
 		return "*" + typeString(e.X)
 	case *ast.ArrayType:
 		return "[]" + typeString(e.Elt)
+	case *ast.MapType:
+		return "map[" + typeString(e.Key) + "]" + typeString(e.Value)
 	case *ast.IndexExpr:
 		return typeString(e.X)
 	case *ast.IndexListExpr:

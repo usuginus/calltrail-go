@@ -2,7 +2,6 @@ package output
 
 import (
 	"fmt"
-	"strings"
 	"unicode"
 
 	"github.com/usuginus/calltrail-go/internal/model"
@@ -148,13 +147,16 @@ func operationCallsiteSymbols(flow model.APIFlow) map[string]bool {
 			}
 		}
 	}
+	for _, dispatch := range flow.Trail.Dispatches {
+		symbols[dispatch.Call.Symbol] = true
+	}
 	return symbols
 }
 
 func summarizeUnknown(calls []model.CallRef, operationCallsites map[string]bool) []model.CallRef {
 	var out []model.CallRef
 	for _, call := range calls {
-		if operationCallsites[call.Symbol] || call.Depth > 2 || isInternalHelperCall(call) || isLowSignalUnknown(call) {
+		if operationCallsites[call.Symbol] || call.Depth > 2 || isInternalHelperCall(call) {
 			continue
 		}
 		out = append(out, call)
@@ -162,28 +164,11 @@ func summarizeUnknown(calls []model.CallRef, operationCallsites map[string]bool)
 	return dedupeCalls(out)
 }
 
-func isLowSignalUnknown(call model.CallRef) bool {
-	symbol := strings.ToLower(call.Symbol)
-	receiver := strings.ToLower(call.Receiver)
-	method := strings.ToLower(call.Method)
-	return strings.Contains(symbol, "log") ||
-		strings.Contains(symbol, "zap") ||
-		method == "now" ||
-		strings.Contains(method, "timestamp") ||
-		receiver == "tok" ||
-		call.Method == "String"
-}
-
 func isInternalHelperCall(call model.CallRef) bool {
 	if call.Method == "" {
 		return false
 	}
-	method := strings.ToLower(call.Method)
-	return startsLower(call.Method) ||
-		strings.Contains(method, "column") ||
-		strings.Contains(method, "decoder") ||
-		strings.Contains(method, "shard") ||
-		strings.Contains(method, "spannercommittimestamp")
+	return startsLower(call.Method)
 }
 
 func startsLower(value string) bool {

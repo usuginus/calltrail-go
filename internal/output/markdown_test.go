@@ -215,6 +215,180 @@ func TestWriteMarkdownIncludesBranchSummary(t *testing.T) {
 	}
 }
 
+func TestWriteMarkdownIncludesDispatchSummary(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name: "ProcessDocument",
+			Kind: "grpc",
+			Entrypoint: model.Entrypoint{
+				Symbol: "Service.ProcessDocument",
+				File:   "handler.go",
+				Line:   10,
+			},
+			Request:  model.TypeRef{Type: "*ProcessDocumentRequest"},
+			Response: model.TypeRef{Type: "*ProcessDocumentResponse"},
+			Trail: model.Trail{
+				Dispatches: []model.DispatchTrace{
+					{
+						Table:     "a.processors",
+						Key:       "cmd.Kind",
+						Call:      model.CallRef{Symbol: "processor.Process", Receiver: "processor", Method: "Process", File: "application.go", Line: 44, Depth: 2},
+						Interface: "DocumentProcessor",
+						Cases: []model.DispatchCase{
+							{
+								Labels: []string{"KindMarkdown"},
+								Layers: []model.LayerCalls{
+									{
+										Name: "application",
+										Calls: []model.CallRef{
+											{Symbol: "markdownProcessor.Process", Receiver: "markdownProcessor", Method: "Process", File: "application.go", Line: 56, Depth: 3, Via: "processor.Process"},
+										},
+									},
+									{
+										Name: "persistence",
+										Calls: []model.CallRef{
+											{Symbol: "documentStore.SaveMarkdown", Receiver: "documentStore", Method: "SaveMarkdown", File: "persistence.go", Line: 7, Depth: 4, Via: "markdownProcessor.Process"},
+										},
+									},
+								},
+							},
+							{
+								Labels: []string{"KindImage"},
+								Layers: []model.LayerCalls{
+									{
+										Name: "application",
+										Calls: []model.CallRef{
+											{Symbol: "imageProcessor.Process", Receiver: "imageProcessor", Method: "Process", File: "application.go", Line: 75, Depth: 3, Via: "processor.Process"},
+										},
+									},
+									{
+										Name: "external_client",
+										Calls: []model.CallRef{
+											{Symbol: "previewClient.RenderImage", Receiver: "previewClient", Method: "RenderImage", File: "external_client.go", Line: 7, Depth: 4, Via: "imageProcessor.Process"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"### Dispatches\n- `processor.Process` dispatched from `a.processors[cmd.Kind]` (application.go:44)",
+		"  - interface: `DocumentProcessor`",
+		"  - case `KindMarkdown`\n    - application: `markdownProcessor.Process`\n    - persistence: `documentStore.SaveMarkdown`",
+		"  - case `KindImage`\n    - application: `imageProcessor.Process`\n    - external_client: `previewClient.RenderImage`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteMarkdownUsesConfiguredLayerForExternalCalls(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name:       "GetDashboard",
+			Kind:       "grpc",
+			Entrypoint: model.Entrypoint{Symbol: "Service.GetDashboard", File: "handler.go", Line: 10},
+			Request:    model.TypeRef{Type: "*GetDashboardRequest"},
+			Response:   model.TypeRef{Type: "*Dashboard"},
+			Trail: model.Trail{
+				Layers: []model.LayerCalls{
+					{
+						Name: "external_client",
+						Calls: []model.CallRef{
+							{Symbol: "s.clients.UserAccount.GetContract", Receiver: "s.clients.UserAccount", Method: "GetContract", File: "usecase.go", Line: 20, Depth: 2},
+							{Symbol: "s.clients.UserAccount.GetPaymentConfig", Receiver: "s.clients.UserAccount", Method: "GetPaymentConfig", File: "usecase.go", Line: 22, Depth: 2},
+							{Symbol: "archive.GetDocument", Receiver: "archive", Method: "GetDocument", File: "archive.go", Line: 30, Depth: 3, Via: "clients.Archive.GetDocument"},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"### external_client\n- `s.clients.UserAccount.GetContract`",
+		"- `s.clients.UserAccount.GetPaymentConfig`",
+		"- `archive.GetDocument`\n  - called from: `clients.Archive.GetDocument`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteMarkdownIncludesEntrypointTypeSwitchAsBranch(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name:       "GetDashboard",
+			Kind:       "grpc",
+			Entrypoint: model.Entrypoint{Symbol: "Service.GetDashboard", File: "handler.go", Line: 10},
+			Request:    model.TypeRef{Type: "*GetDashboardRequest"},
+			Response:   model.TypeRef{Type: "*Dashboard"},
+			Trail: model.Trail{
+				Branches: []model.BranchTrace{
+					{
+						Kind:     "type_switch",
+						Function: "Service.GetDashboard",
+						Expr:     "payload := req.Payload.(type)",
+						File:     "handler.go",
+						Line:     12,
+						Cases: []model.BranchCase{
+							{
+								Labels: []string{"*GetDashboardRequest_V1"},
+								Layers: []model.LayerCalls{
+									{
+										Name: "usecase",
+										Calls: []model.CallRef{
+											{Symbol: "dashboard.Get", Receiver: "dashboard", Method: "Get", File: "usecase.go", Line: 20, Depth: 2},
+										},
+									},
+								},
+							},
+							{
+								Default: true,
+								Unknown: []model.CallRef{
+									{Symbol: "errors.NewInvalidArgumentErr", Receiver: "errors", Method: "NewInvalidArgumentErr", File: "handler.go", Line: 28, Depth: 1},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"### Branches\n- `Service.GetDashboard` type switch `payload := req.Payload.(type)` (handler.go:12)",
+		"  - case `*GetDashboardRequest_V1`\n    - usecase: `dashboard.Get`",
+		"  - default\n    - other: `errors.NewInvalidArgumentErr`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestWriteMarkdownIncludesInterfaceCallSummary(t *testing.T) {
 	var buf bytes.Buffer
 	err := WriteMarkdown(&buf, []model.APIFlow{
@@ -264,7 +438,7 @@ func TestWriteMarkdownIncludesInterfaceCallSummary(t *testing.T) {
 	}
 }
 
-func TestWriteMarkdownOmitsLowSignalInterfaceCalls(t *testing.T) {
+func TestWriteMarkdownSplitsUnresolvedInterfaceCalls(t *testing.T) {
 	var buf bytes.Buffer
 	err := WriteMarkdown(&buf, []model.APIFlow{
 		{
@@ -276,10 +450,51 @@ func TestWriteMarkdownOmitsLowSignalInterfaceCalls(t *testing.T) {
 			Trail: model.Trail{
 				InterfaceCalls: []model.InterfaceCallTrace{
 					{
-						Call:      model.CallRef{Symbol: "u.clock.Now", Method: "Now", File: "usecase.go", Line: 12},
-						Interface: "Clock",
+						Call:      model.CallRef{Symbol: "s.fooUsecase.GetFoo", File: "handler.go", Line: 12},
+						Interface: "FooUsecase",
 						Implementations: []model.ImplementationCandidate{
-							{Call: model.CallRef{Symbol: "systemClock.Now", Method: "Now", File: "clock.go", Line: 8, Depth: 2, Via: "u.clock.Now"}, Expanded: true},
+							{Call: model.CallRef{Symbol: "fooUsecase.GetFoo", File: "usecase.go", Line: 20}, Expanded: true},
+						},
+					},
+					{
+						Call:      model.CallRef{Symbol: "s.inventory.List", File: "usecase.go", Line: 24},
+						Interface: "InventoryClient",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"### Interface Calls\n- `s.fooUsecase.GetFoo` (handler.go:12)",
+		"### Unresolved Interface Calls\n- `s.inventory.List` (usecase.go:24)\n  - interface: `InventoryClient`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteMarkdownOmitsInterfaceCallsWithOnlyInternalHelperImplementations(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name:       "GetFoo",
+			Kind:       "grpc",
+			Entrypoint: model.Entrypoint{Symbol: "Server.GetFoo", File: "handler.go", Line: 10},
+			Request:    model.TypeRef{Type: "*pb.GetFooRequest"},
+			Response:   model.TypeRef{Type: "*pb.GetFooResponse"},
+			Trail: model.Trail{
+				InterfaceCalls: []model.InterfaceCallTrace{
+					{
+						Call:      model.CallRef{Symbol: "u.helper.normalize", Method: "normalize", File: "usecase.go", Line: 12},
+						Interface: "DocumentNormalizer",
+						Implementations: []model.ImplementationCandidate{
+							{Call: model.CallRef{Symbol: "documentNormalizer.normalize", Method: "normalize", File: "normalizer.go", Line: 8, Depth: 2, Via: "u.helper.normalize"}, Expanded: true},
 						},
 					},
 					{
@@ -298,8 +513,8 @@ func TestWriteMarkdownOmitsLowSignalInterfaceCalls(t *testing.T) {
 	}
 
 	got := buf.String()
-	if strings.Contains(got, "u.clock.Now") || strings.Contains(got, "systemClock.Now") {
-		t.Fatalf("markdown output includes low-signal clock interface call:\n%s", got)
+	if strings.Contains(got, "u.helper.normalize") || strings.Contains(got, "documentNormalizer.normalize") {
+		t.Fatalf("markdown output includes internal helper interface call:\n%s", got)
 	}
 	if !strings.Contains(got, "s.fooUsecase.GetFoo") {
 		t.Fatalf("markdown output omitted useful interface call:\n%s", got)

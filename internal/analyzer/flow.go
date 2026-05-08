@@ -11,7 +11,7 @@ import (
 func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index projectIndex, opts Options) model.APIFlow {
 	pos := fset.Position(fn.Pos())
 	receiverType := receiverName(fn)
-	scope := newScope(fn, index, receiverType, receiverVarName(fn), index.structFields[receiverType])
+	scope := newScope(fset, fn, index, receiverType, receiverVarName(fn), index.structFields[receiverType])
 	flow := model.APIFlow{
 		Name: fn.Name.Name,
 		Kind: "grpc",
@@ -44,6 +44,7 @@ func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index
 				candidateDepth := 2
 				resolved := resolveCall(ref, scope, index, opts.Rules)
 				recordInterfaceCall(fset, &flow, ref, resolved, candidateDepth, opts.Depth)
+				recordDispatchCall(fset, &flow, ref, scope, index, candidateDepth, opts.Depth, opts.Rules)
 				if opts.Depth <= 1 {
 					return true
 				}
@@ -80,7 +81,7 @@ func traceFunctionCalls(
 	if currentDepth > maxDepth {
 		return
 	}
-	scope := newScope(info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
+	scope := newScope(fset, info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
 	ast.Inspect(info.fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.SwitchStmt:
@@ -97,6 +98,7 @@ func traceFunctionCalls(
 			candidateDepth := currentDepth + 1
 			resolved := resolveCall(ref, scope, index, ruleSet)
 			recordInterfaceCall(fset, flow, ref, resolved, candidateDepth, maxDepth)
+			recordDispatchCall(fset, flow, ref, scope, index, candidateDepth, maxDepth, ruleSet)
 			if currentDepth >= maxDepth {
 				return true
 			}
