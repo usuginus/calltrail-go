@@ -2,10 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/usuginus/calltrail-go/internal/model"
 )
 
 func TestParseDefaultsForHumanReadableOutput(t *testing.T) {
@@ -68,6 +71,33 @@ func TestRunListOutputsDetectedHandlers(t *testing.T) {
 	}
 }
 
+func TestRunJSONOutputsStructuredLayers(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Run([]string{"../analyzer/testdata/simple", "--rpc", "GetFoo", "--depth", "2", "--format", "json"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var flows []model.APIFlow
+	if err := json.Unmarshal(stdout.Bytes(), &flows); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+	usecases := flows[0].Trail.LayerCalls("usecase")
+	if len(usecases) != 2 {
+		t.Fatalf("usecase calls = %#v, want 2 calls", usecases)
+	}
+	if got := flows[0].Trail.Layers[0].Name; got != "usecase" {
+		t.Fatalf("first layer = %q, want usecase", got)
+	}
+}
+
 func TestParseClampsInvalidDepth(t *testing.T) {
 	var stderr bytes.Buffer
 	opts, err := Parse([]string{"--depth", "0"}, &stderr)
@@ -79,6 +109,23 @@ func TestParseClampsInvalidDepth(t *testing.T) {
 	}
 	if stderr.String() == "" {
 		t.Fatal("expected warning for invalid depth")
+	}
+}
+
+func TestFindConfigSearchesParentDirectories(t *testing.T) {
+	root := t.TempDir()
+	child := filepath.Join(root, "internal", "driver", "grpc")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned error: %v", err)
+	}
+	configPath := filepath.Join(root, ".calltrail.yaml")
+	if err := os.WriteFile(configPath, []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+
+	got := FindConfig([]string{filepath.Join(child, "...")})
+	if got != configPath {
+		t.Fatalf("FindConfig = %q, want %q", got, configPath)
 	}
 }
 

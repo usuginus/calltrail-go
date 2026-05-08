@@ -68,6 +68,22 @@ ignore:
 	}
 }
 
+func TestLoadExampleConfig(t *testing.T) {
+	ruleSet, err := Load(filepath.Join("..", "..", "calltrail.example.yaml"))
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if len(ruleSet.Layers) == 0 {
+		t.Fatal("example config has no layers")
+	}
+	if !ruleSet.Ignore.StandardLibrary {
+		t.Fatal("example config should auto-ignore standard library package calls")
+	}
+	if got := ruleSet.Resolution.SkipImplementations.FilePathContains; !contains(got, "/mock/") {
+		t.Fatalf("skip implementation paths = %#v, want /mock/", got)
+	}
+}
+
 func TestParseYAMLConfigShape(t *testing.T) {
 	ruleSet, err := parseYAML(`
 version: 1
@@ -136,6 +152,22 @@ resolution:
 	}
 	if got := ruleSet.Resolution.SkipImplementations.ReceiverNamePrefixes[0]; got != "Fake" {
 		t.Fatalf("skip receiver prefix = %q", got)
+	}
+}
+
+func TestParseYAMLRejectsOldConfigShape(t *testing.T) {
+	_, err := parseYAML(`
+version: 1
+classifiers:
+  repositories:
+    symbol_contains:
+      - repository
+ignore_calls:
+  packages:
+    - log
+`)
+	if err == nil {
+		t.Fatal("parseYAML returned nil error for old config shape")
 	}
 }
 
