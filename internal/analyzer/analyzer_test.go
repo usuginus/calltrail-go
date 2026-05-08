@@ -205,6 +205,73 @@ func TestAnalyzeCustomLayersExample(t *testing.T) {
 	}
 }
 
+func TestAnalyzeBranchDispatchExample(t *testing.T) {
+	ruleSet, err := rules.Load("../../examples/branch-dispatch/.calltrail.yaml")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	flows, err := Analyze([]string{"../../examples/branch-dispatch"}, Options{
+		Depth: 3,
+		Rules: ruleSet,
+	})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	if flow.Name != "ProcessDocument" {
+		t.Fatalf("flow.Name = %q, want ProcessDocument", flow.Name)
+	}
+	if len(flow.Trail.Branches) != 2 {
+		t.Fatalf("branches = %#v, want 2 branches", flow.Trail.Branches)
+	}
+
+	typeSwitch := findBranch(flow.Trail.Branches, "type_switch", "asset := cmd.Asset.(type)")
+	if typeSwitch == nil {
+		t.Fatalf("type switch branch not found: %#v", flow.Trail.Branches)
+	}
+	if got := len(typeSwitch.Cases); got != 3 {
+		t.Fatalf("type switch cases = %d, want 3", got)
+	}
+	markdownCase := findCase(typeSwitch.Cases, "MarkdownAsset")
+	if markdownCase == nil || !hasCall(markdownCase.LayerCalls("domain"), "documentPolicy.ValidateMarkdown") {
+		t.Fatalf("MarkdownAsset case = %#v, want documentPolicy.ValidateMarkdown", markdownCase)
+	}
+	if !hasCall(markdownCase.LayerCalls("domain"), "MarkdownAsset.Normalize") {
+		t.Fatalf("MarkdownAsset case = %#v, want MarkdownAsset.Normalize", markdownCase)
+	}
+	imageCase := findCase(typeSwitch.Cases, "ImageAsset")
+	if imageCase == nil || !hasCall(imageCase.LayerCalls("domain"), "ImageAsset.Normalize") {
+		t.Fatalf("ImageAsset case = %#v, want ImageAsset.Normalize", imageCase)
+	}
+	defaultAssetCase := findDefaultCase(typeSwitch.Cases)
+	if defaultAssetCase == nil || !hasCall(defaultAssetCase.LayerCalls("domain"), "documentPolicy.RejectUnsupportedAsset") {
+		t.Fatalf("type switch default case = %#v, want documentPolicy.RejectUnsupportedAsset", defaultAssetCase)
+	}
+
+	valueSwitch := findBranch(flow.Trail.Branches, "switch", "cmd.Mode")
+	if valueSwitch == nil {
+		t.Fatalf("value switch branch not found: %#v", flow.Trail.Branches)
+	}
+	publishCase := findCase(valueSwitch.Cases, `"publish"`)
+	if publishCase == nil {
+		t.Fatalf("publish case not found: %#v", valueSwitch.Cases)
+	}
+	if !hasCall(publishCase.LayerCalls("persistence"), "documentStore.Publish") {
+		t.Fatalf("publish case persistence = %#v, want documentStore.Publish", publishCase.LayerCalls("persistence"))
+	}
+	if !hasCall(publishCase.LayerCalls("external_client"), "previewClient.Index") {
+		t.Fatalf("publish case external_client = %#v, want previewClient.Index", publishCase.LayerCalls("external_client"))
+	}
+	defaultModeCase := findDefaultCase(valueSwitch.Cases)
+	if defaultModeCase == nil || !hasCall(defaultModeCase.LayerCalls("domain"), "documentPolicy.RejectUnsupportedMode") {
+		t.Fatalf("mode switch default case = %#v, want documentPolicy.RejectUnsupportedMode", defaultModeCase)
+	}
+}
+
 func TestClassifyUsesReceiverTypeBeforeCurrentFilePath(t *testing.T) {
 	ruleSet, err := rules.Load("")
 	if err != nil {
@@ -253,4 +320,33 @@ func hasCall(calls []model.CallRef, symbol string) bool {
 		}
 	}
 	return false
+}
+
+func findBranch(branches []model.BranchTrace, kind string, expr string) *model.BranchTrace {
+	for i := range branches {
+		if branches[i].Kind == kind && branches[i].Expr == expr {
+			return &branches[i]
+		}
+	}
+	return nil
+}
+
+func findCase(cases []model.BranchCase, label string) *model.BranchCase {
+	for i := range cases {
+		for _, got := range cases[i].Labels {
+			if got == label {
+				return &cases[i]
+			}
+		}
+	}
+	return nil
+}
+
+func findDefaultCase(cases []model.BranchCase) *model.BranchCase {
+	for i := range cases {
+		if cases[i].Default {
+			return &cases[i]
+		}
+	}
+	return nil
 }

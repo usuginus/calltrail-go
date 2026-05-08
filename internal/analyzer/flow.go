@@ -32,6 +32,12 @@ func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index
 
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
+		case *ast.SwitchStmt:
+			recordSwitchBranchTrace(fset, source.displayPath, &flow, n, scope, index, 1, flow.Entrypoint.Symbol, opts.Depth, opts.Rules, source.stdlibPackageAliases)
+		case *ast.TypeSwitchStmt:
+			recordTypeSwitchBranchTrace(fset, source.displayPath, &flow, n, scope, index, 1, flow.Entrypoint.Symbol, opts.Depth, opts.Rules, source.stdlibPackageAliases)
+			traceTypeSwitchCasesForFlow(fset, source.displayPath, &flow, n, scope, index, 1, "", opts.Depth, opts.Rules, source.stdlibPackageAliases)
+			return false
 		case *ast.CallExpr:
 			ref, ok := recordCall(fset, source.displayPath, &flow, n, scope, index, 1, "", opts.Rules, source.stdlibPackageAliases)
 			if ok && opts.Depth > 1 {
@@ -70,19 +76,24 @@ func traceFunctionCalls(
 	}
 	scope := newScope(info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
 	ast.Inspect(info.fn.Body, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		ref, added := recordCall(fset, info.file, flow, call, scope, index, currentDepth, via, ruleSet, info.stdlibPackageAliases)
-		if !added || currentDepth >= maxDepth {
-			return true
-		}
-		for _, candidate := range resolveCandidates(ref, scope, index, ruleSet) {
-			candidateDepth := currentDepth + 1
-			recordImplementation(fset, flow, candidate, ref.Symbol, candidateDepth, ruleSet)
-			if candidateDepth < maxDepth {
-				traceFunctionCalls(fset, flow, candidate, index, candidateDepth, implementationSymbol(candidate), maxDepth, ruleSet)
+		switch n := node.(type) {
+		case *ast.SwitchStmt:
+			recordSwitchBranchTrace(fset, info.file, flow, n, scope, index, currentDepth, implementationSymbol(info), maxDepth, ruleSet, info.stdlibPackageAliases)
+		case *ast.TypeSwitchStmt:
+			recordTypeSwitchBranchTrace(fset, info.file, flow, n, scope, index, currentDepth, implementationSymbol(info), maxDepth, ruleSet, info.stdlibPackageAliases)
+			traceTypeSwitchCasesForFlow(fset, info.file, flow, n, scope, index, currentDepth, via, maxDepth, ruleSet, info.stdlibPackageAliases)
+			return false
+		case *ast.CallExpr:
+			ref, added := recordCall(fset, info.file, flow, n, scope, index, currentDepth, via, ruleSet, info.stdlibPackageAliases)
+			if !added || currentDepth >= maxDepth {
+				return true
+			}
+			for _, candidate := range resolveCandidates(ref, scope, index, ruleSet) {
+				candidateDepth := currentDepth + 1
+				recordImplementation(fset, flow, candidate, ref.Symbol, candidateDepth, ruleSet)
+				if candidateDepth < maxDepth {
+					traceFunctionCalls(fset, flow, candidate, index, candidateDepth, implementationSymbol(candidate), maxDepth, ruleSet)
+				}
 			}
 		}
 		return true

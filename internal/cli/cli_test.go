@@ -98,6 +98,42 @@ func TestRunJSONOutputsStructuredLayers(t *testing.T) {
 	}
 }
 
+func TestRunJSONOutputsBranchDetails(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Run([]string{
+		"../../examples/branch-dispatch",
+		"--config", "../../examples/branch-dispatch/.calltrail.yaml",
+		"--rpc", "ProcessDocument",
+		"--depth", "3",
+		"--format", "json",
+	}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var flows []model.APIFlow
+	if err := json.Unmarshal(stdout.Bytes(), &flows); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+	branches := flows[0].Trail.Branches
+	if len(branches) != 2 {
+		t.Fatalf("branches = %#v, want 2 branches", branches)
+	}
+	if branches[0].Kind != "type_switch" || branches[1].Kind != "switch" {
+		t.Fatalf("branch kinds = %#v, want type_switch then switch", branches)
+	}
+	if len(branches[1].Cases) != 3 {
+		t.Fatalf("switch cases = %#v, want 3 cases", branches[1].Cases)
+	}
+}
+
 func TestParseClampsInvalidDepth(t *testing.T) {
 	var stderr bytes.Buffer
 	opts, err := Parse([]string{"--depth", "0"}, &stderr)

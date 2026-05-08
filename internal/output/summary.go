@@ -98,12 +98,17 @@ func viaCallsite(via string, firstCallBySymbol map[string]model.CallRef) []model
 }
 
 func sameOperationChild(parent model.CallRef, children []model.CallRef) (model.CallRef, bool) {
+	var matches []model.CallRef
 	for _, child := range children {
 		if child.Symbol != parent.Symbol && child.Method == parent.Method {
-			return child, true
+			matches = append(matches, child)
 		}
 	}
-	return model.CallRef{}, false
+	matches = dedupeCalls(matches)
+	if len(matches) != 1 {
+		return model.CallRef{}, false
+	}
+	return matches[0], true
 }
 
 func appendOperation(operations []operationSummary, index map[string]int, next operationSummary) []operationSummary {

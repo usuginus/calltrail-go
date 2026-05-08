@@ -23,15 +23,33 @@ type TypeRef struct {
 }
 
 type Trail struct {
-	Layers     []LayerCalls `json:"layers,omitempty"`
-	Async      []CallRef    `json:"async,omitempty"`
-	Unknown    []CallRef    `json:"unknown,omitempty"`
+	Layers     []LayerCalls  `json:"layers,omitempty"`
+	Branches   []BranchTrace `json:"branches,omitempty"`
+	Async      []CallRef     `json:"async,omitempty"`
+	Unknown    []CallRef     `json:"unknown,omitempty"`
 	layerOrder []string
 }
 
 type LayerCalls struct {
 	Name  string    `json:"name"`
 	Calls []CallRef `json:"calls,omitempty"`
+}
+
+type BranchTrace struct {
+	Kind     string       `json:"kind"`
+	Function string       `json:"function"`
+	Expr     string       `json:"expr,omitempty"`
+	File     string       `json:"file"`
+	Line     int          `json:"line"`
+	Depth    int          `json:"depth,omitempty"`
+	Cases    []BranchCase `json:"cases,omitempty"`
+}
+
+type BranchCase struct {
+	Labels  []string     `json:"labels,omitempty"`
+	Default bool         `json:"default,omitempty"`
+	Layers  []LayerCalls `json:"layers,omitempty"`
+	Unknown []CallRef    `json:"unknown,omitempty"`
 }
 
 type CallRef struct {
@@ -66,22 +84,15 @@ func (t *Trail) AppendLayerCall(name string, call CallRef) {
 		t.Unknown = append(t.Unknown, call)
 		return
 	}
-	for i := range t.Layers {
-		if t.Layers[i].Name == name {
-			t.Layers[i].Calls = append(t.Layers[i].Calls, call)
-			return
-		}
-	}
+	appendLayerCall(&t.Layers, name, call, t.layerOrder)
+}
 
-	layer := LayerCalls{Name: name, Calls: []CallRef{call}}
-	insertAt := t.layerInsertIndex(name)
-	if insertAt == len(t.Layers) {
-		t.Layers = append(t.Layers, layer)
+func (c *BranchCase) AppendLayerCall(name string, call CallRef, layerOrder []string) {
+	if name == "" {
+		c.Unknown = append(c.Unknown, call)
 		return
 	}
-	t.Layers = append(t.Layers, LayerCalls{})
-	copy(t.Layers[insertAt+1:], t.Layers[insertAt:])
-	t.Layers[insertAt] = layer
+	appendLayerCall(&c.Layers, name, call, layerOrder)
 }
 
 func (t Trail) LayerCalls(name string) []CallRef {
@@ -93,18 +104,46 @@ func (t Trail) LayerCalls(name string) []CallRef {
 	return nil
 }
 
-func (t Trail) layerInsertIndex(name string) int {
-	targetOrder := orderIndex(t.layerOrder, name)
-	if targetOrder < 0 {
-		return len(t.Layers)
+func (c BranchCase) LayerCalls(name string) []CallRef {
+	for _, layer := range c.Layers {
+		if layer.Name == name {
+			return layer.Calls
+		}
 	}
-	for i, layer := range t.Layers {
-		layerOrder := orderIndex(t.layerOrder, layer.Name)
-		if layerOrder < 0 || layerOrder > targetOrder {
+	return nil
+}
+
+func appendLayerCall(layers *[]LayerCalls, name string, call CallRef, layerOrder []string) {
+	for i := range *layers {
+		if (*layers)[i].Name == name {
+			(*layers)[i].Calls = append((*layers)[i].Calls, call)
+			return
+		}
+	}
+
+	layer := LayerCalls{Name: name, Calls: []CallRef{call}}
+	insertAt := layerInsertIndex(*layers, name, layerOrder)
+	if insertAt == len(*layers) {
+		*layers = append(*layers, layer)
+		return
+	}
+	*layers = append(*layers, LayerCalls{})
+	copy((*layers)[insertAt+1:], (*layers)[insertAt:])
+	(*layers)[insertAt] = layer
+}
+
+func layerInsertIndex(layers []LayerCalls, name string, layerOrder []string) int {
+	targetOrder := orderIndex(layerOrder, name)
+	if targetOrder < 0 {
+		return len(layers)
+	}
+	for i, layer := range layers {
+		currentOrder := orderIndex(layerOrder, layer.Name)
+		if currentOrder < 0 || currentOrder > targetOrder {
 			return i
 		}
 	}
-	return len(t.Layers)
+	return len(layers)
 }
 
 func orderIndex(values []string, value string) int {

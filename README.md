@@ -75,6 +75,15 @@ go run ./cmd/calltrail-go ./examples/custom-layers \
   --depth 3
 ```
 
+Run the branch-dispatch example to see switch and type-switch details:
+
+```sh
+go run ./cmd/calltrail-go ./examples/branch-dispatch \
+  --config ./examples/branch-dispatch/.calltrail.yaml \
+  --rpc ProcessDocument \
+  --depth 3
+```
+
 ## What It Detects
 
 `calltrail-go` currently detects methods shaped like this:
@@ -88,6 +97,7 @@ For each handler, it extracts:
 - handler symbol, file, and line
 - request and response types
 - downstream calls grouped by configured layers, plus async and notable calls
+- branch-specific calls for `switch` and `type switch` statements
 - gRPC status codes returned via `status.Error` and `status.Errorf`
 
 With `--depth` greater than 1, `calltrail-go` follows implementation candidates
@@ -143,10 +153,17 @@ stays readable.
 - `FooRepository.FindFoo`
   - called from: `u.repositories.Foo.FindFoo` (internal/usecase/foo.go:24)
   - implementation: internal/repository/foo_repository.go:30
+
+### Branches
+- `fooUsecase.GetFoo` switch `req.Kind` (internal/usecase/foo.go:36)
+  - case `"cached"`
+    - repository: `FooCacheRepository.FindFoo`
+  - case `"remote"`
+    - external_client: `FooClient.GetFoo`
 ```
 
 JSON output keeps the raw trail data, including free-form layer names under
-`trail.layers`:
+`trail.layers` and branch details under `trail.branches`:
 
 ```sh
 calltrail-go ./... --rpc GetFoo --format json

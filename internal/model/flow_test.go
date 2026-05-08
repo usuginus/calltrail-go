@@ -37,3 +37,19 @@ func TestTrailAppendLayerCallAppendsUnknownOrderLayers(t *testing.T) {
 		t.Fatalf("third layer = %q, want domain", got)
 	}
 }
+
+func TestBranchCaseAppendLayerCallKeepsConfiguredOrder(t *testing.T) {
+	var branchCase BranchCase
+	branchCase.AppendLayerCall("persistence", CallRef{Symbol: "store.Insert"}, []string{"domain", "persistence"})
+	branchCase.AppendLayerCall("domain", CallRef{Symbol: "policy.Validate"}, []string{"domain", "persistence"})
+
+	if len(branchCase.Layers) != 2 {
+		t.Fatalf("layers = %d, want 2", len(branchCase.Layers))
+	}
+	if got := branchCase.Layers[0].Name; got != "domain" {
+		t.Fatalf("first layer = %q, want domain", got)
+	}
+	if got := branchCase.Layers[1].Name; got != "persistence" {
+		t.Fatalf("second layer = %q, want persistence", got)
+	}
+}

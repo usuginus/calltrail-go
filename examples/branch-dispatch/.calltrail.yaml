@@ -1,0 +1,51 @@
+version: 1
+
+handlers:
+  match:
+    package_names:
+      - transport
+  signature:
+    require_context_first_arg: true
+    require_pointer_request: true
+    require_pointer_response: true
+    require_error_return: true
+
+layers:
+  - name: application
+    match:
+      call_name_contains:
+        - application
+      receiver_type_contains:
+        - Application
+
+  - name: domain
+    match:
+      receiver_type_contains:
+        - Policy
+        - Asset
+
+  - name: persistence
+    match:
+      receiver_type_contains:
+        - Store
+
+  - name: external_client
+    match:
+      receiver_type_contains:
+        - Client
+
+ignore:
+  standard_library: true
+  calls:
+    full_names:
+      - err.Error
+  getters:
+    local_values: true
+    receiver_names:
+      - req
+
+resolution:
+  skip_implementations:
+    receiver_name_prefixes:
+      - Mock
+      - Fake

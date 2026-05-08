@@ -141,3 +141,117 @@ func TestWriteMarkdownDoesNotTreatViaOnlyCallAsImplementation(t *testing.T) {
 		t.Fatalf("markdown output treats callsite as implementation:\n%s", got)
 	}
 }
+
+func TestWriteMarkdownIncludesBranchSummary(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name: "ProcessDocument",
+			Kind: "grpc",
+			Entrypoint: model.Entrypoint{
+				Symbol: "Service.ProcessDocument",
+				File:   "handler.go",
+				Line:   10,
+			},
+			Request:  model.TypeRef{Type: "*ProcessDocumentRequest"},
+			Response: model.TypeRef{Type: "*ProcessDocumentResponse"},
+			Trail: model.Trail{
+				Branches: []model.BranchTrace{
+					{
+						Kind:     "switch",
+						Function: "documentApplication.ProcessDocument",
+						Expr:     "cmd.Mode",
+						File:     "application.go",
+						Line:     24,
+						Cases: []model.BranchCase{
+							{
+								Labels: []string{`"publish"`},
+								Layers: []model.LayerCalls{
+									{
+										Name: "persistence",
+										Calls: []model.CallRef{
+											{Symbol: "a.store.Publish", Receiver: "a.store", Method: "Publish", File: "application.go", Line: 30, Depth: 2},
+											{Symbol: "documentStore.Publish", Receiver: "documentStore", Method: "Publish", File: "persistence.go", Line: 12, Depth: 3, Via: "a.store.Publish"},
+										},
+									},
+									{
+										Name: "external_client",
+										Calls: []model.CallRef{
+											{Symbol: "previewClient.Index", Receiver: "previewClient", Method: "Index", File: "external_client.go", Line: 7, Depth: 3, Via: "a.index.Index"},
+										},
+									},
+								},
+							},
+							{
+								Default: true,
+								Layers: []model.LayerCalls{
+									{
+										Name: "domain",
+										Calls: []model.CallRef{
+											{Symbol: "documentPolicy.RejectUnsupportedMode", Receiver: "documentPolicy", Method: "RejectUnsupportedMode", File: "domain.go", Line: 24, Depth: 3, Via: "a.policy.RejectUnsupportedMode"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	for _, want := range []string{
+		"### Branches\n- `documentApplication.ProcessDocument` switch `cmd.Mode` (application.go:24)",
+		"  - case `\"publish\"`\n    - persistence: `documentStore.Publish`\n    - external_client: `previewClient.Index`",
+		"  - default\n    - domain: `documentPolicy.RejectUnsupportedMode`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestWriteMarkdownDoesNotCollapseAmbiguousImplementations(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name: "ProcessDocument",
+			Kind: "grpc",
+			Entrypoint: model.Entrypoint{
+				Symbol: "Service.ProcessDocument",
+				File:   "handler.go",
+				Line:   10,
+			},
+			Request:  model.TypeRef{Type: "*ProcessDocumentRequest"},
+			Response: model.TypeRef{Type: "*ProcessDocumentResponse"},
+			Trail: model.Trail{
+				Layers: []model.LayerCalls{
+					{
+						Name: "domain",
+						Calls: []model.CallRef{
+							{Symbol: "asset.Normalize", Receiver: "asset", Method: "Normalize", File: "application.go", Line: 20, Depth: 2, Via: "documentApplication.ProcessDocument"},
+							{Symbol: "MarkdownAsset.Normalize", Receiver: "MarkdownAsset", Method: "Normalize", File: "application.go", Line: 8, Depth: 3, Via: "asset.Normalize"},
+							{Symbol: "asset.Normalize", Receiver: "asset", Method: "Normalize", File: "application.go", Line: 24, Depth: 2, Via: "documentApplication.ProcessDocument"},
+							{Symbol: "ImageAsset.Normalize", Receiver: "ImageAsset", Method: "Normalize", File: "application.go", Line: 14, Depth: 3, Via: "asset.Normalize"},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "- `asset.Normalize`\n  - called from:") {
+		t.Fatalf("markdown output does not keep ambiguous call as direct operation:\n%s", got)
+	}
+	if strings.Contains(got, "implementation: application.go:8") || strings.Contains(got, "related internal call") {
+		t.Fatalf("markdown output collapsed ambiguous implementations:\n%s", got)
+	}
+}
