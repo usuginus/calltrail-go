@@ -454,8 +454,8 @@ func TestClassifyDoesNotUseCurrentFilePathForUtilityCalls(t *testing.T) {
 		t.Fatalf("Load returned error: %v", err)
 	}
 	ref := model.CallRef{
-		Symbol:   "mspanner.ReadOnlyTransaction",
-		Receiver: "mspanner",
+		Symbol:   "tx.ReadOnlyTransaction",
+		Receiver: "tx",
 		Method:   "ReadOnlyTransaction",
 		File:     "internal/usecase/foo.go",
 	}
