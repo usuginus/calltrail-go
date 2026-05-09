@@ -346,6 +346,20 @@ layers:
         - repository
 ```
 
+## Benchmarking
+
+Use Go benchmarks to track analyzer and CLI performance before and after
+optimization work:
+
+```sh
+go test ./internal/analyzer -run '^$' -bench=. -benchmem
+go test ./internal/cli -run '^$' -bench=. -benchmem
+```
+
+The analyzer benchmarks cover full trail extraction, RPC filtering, and handler
+detection without downstream call trails. The CLI benchmarks cover `--list`,
+Markdown output, and JSON output for representative fixtures.
+
 ## Roadmap
 
 - Type-aware call resolution with `go/packages`
