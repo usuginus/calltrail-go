@@ -111,6 +111,16 @@ func TestAnalyzeRecordsInterfaceCallCandidates(t *testing.T) {
 	}
 }
 
+func TestAnalyzeMissingRPCReturnsNoFlows(t *testing.T) {
+	flows, err := Analyze([]string{"testdata/simple"}, Options{RPC: "MissingRPC"})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 0 {
+		t.Fatalf("len(flows) = %d, want 0", len(flows))
+	}
+}
+
 func TestAnalyzeDepthThreeFollowsNestedStructFieldCandidate(t *testing.T) {
 	flows, err := Analyze([]string{"testdata/simple"}, Options{Depth: 3})
 	if err != nil {
