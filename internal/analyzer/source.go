@@ -36,21 +36,38 @@ func loadSources(paths []string) (*token.FileSet, []parsedSource, error) {
 	}
 
 	fset := token.NewFileSet()
-	sources := make([]parsedSource, 0, len(files))
-	for _, file := range files {
-		parsedFile, err := parser.ParseFile(fset, file.path, nil, 0)
-		if err != nil {
-			return nil, nil, err
-		}
-		sources = append(sources, parsedSource{
-			sourceFile:           file,
-			file:                 parsedFile,
-			packageName:          parsedFile.Name.Name,
-			fieldTypes:           collectStructFieldTypes(parsedFile),
-			stdlibPackageAliases: collectStdlibPackageAliases(parsedFile),
-		})
+	sources, err := parseSources(fset, files)
+	if err != nil {
+		return nil, nil, err
 	}
 	return fset, sources, nil
+}
+
+func parseSources(fset *token.FileSet, files []sourceFile) ([]parsedSource, error) {
+	stdlibImports := make(map[string]bool)
+	sources := make([]parsedSource, 0, len(files))
+	for _, file := range files {
+		source, err := parseSource(fset, file, stdlibImports)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, source)
+	}
+	return sources, nil
+}
+
+func parseSource(fset *token.FileSet, file sourceFile, stdlibImports map[string]bool) (parsedSource, error) {
+	parsedFile, err := parser.ParseFile(fset, file.path, nil, 0)
+	if err != nil {
+		return parsedSource{}, err
+	}
+	return parsedSource{
+		sourceFile:           file,
+		file:                 parsedFile,
+		packageName:          parsedFile.Name.Name,
+		fieldTypes:           collectStructFieldTypes(parsedFile),
+		stdlibPackageAliases: collectStdlibPackageAliases(parsedFile, stdlibImports),
+	}, nil
 }
 
 func collectGoFiles(root string) ([]sourceFile, error) {
@@ -124,11 +141,11 @@ func displayPath(root, path string) string {
 	return filepath.ToSlash(rel)
 }
 
-func collectStdlibPackageAliases(file *ast.File) map[string]bool {
+func collectStdlibPackageAliases(file *ast.File, stdlibImports map[string]bool) map[string]bool {
 	aliases := make(map[string]bool)
 	for _, spec := range file.Imports {
 		importPath, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || !isStdlibImportPath(importPath) {
+		if err != nil || !isStdlibImportPath(importPath, stdlibImports) {
 			continue
 		}
 		if spec.Name != nil {
@@ -145,9 +162,29 @@ func collectStdlibPackageAliases(file *ast.File) map[string]bool {
 	return aliases
 }
 
-func isStdlibImportPath(importPath string) bool {
+func isStdlibImportPath(importPath string, cache map[string]bool) bool {
+	if cache != nil {
+		if isStdlib, ok := cache[importPath]; ok {
+			return isStdlib
+		}
+	}
+	if importPathHasDomain(importPath) {
+		if cache != nil {
+			cache[importPath] = false
+		}
+		return false
+	}
 	pkg, err := build.Default.Import(importPath, "", build.FindOnly)
-	return err == nil && pkg.Goroot
+	isStdlib := err == nil && pkg.Goroot
+	if cache != nil {
+		cache[importPath] = isStdlib
+	}
+	return isStdlib
+}
+
+func importPathHasDomain(importPath string) bool {
+	firstSegment, _, _ := strings.Cut(importPath, "/")
+	return strings.Contains(firstSegment, ".")
 }
 
 func defaultImportName(importPath string) string {

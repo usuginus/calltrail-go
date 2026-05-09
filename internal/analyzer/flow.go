@@ -9,26 +9,10 @@ import (
 )
 
 func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index projectIndex, opts Options) model.APIFlow {
-	pos := fset.Position(fn.Pos())
 	receiverType := receiverName(fn)
 	scope := newScope(fset, fn, index, receiverType, receiverVarName(fn), index.structFields[receiverType])
-	flow := model.APIFlow{
-		Name: fn.Name.Name,
-		Kind: "grpc",
-		Entrypoint: model.Entrypoint{
-			Symbol: receiverType + "." + fn.Name.Name,
-			File:   source.displayPath,
-			Line:   pos.Line,
-		},
-		Request: model.TypeRef{
-			Type: typeString(fn.Type.Params.List[1].Type),
-		},
-		Response: model.TypeRef{
-			Type: typeString(fn.Type.Results.List[0].Type),
-		},
-		Trail:      model.NewTrail(layerNames(opts.Rules.Layers)),
-		Confidence: model.Confidence{Overall: "medium"},
-	}
+	flow := buildFlowHeader(fset, source, fn)
+	flow.Trail = model.NewTrail(layerNames(opts.Rules.Layers))
 
 	ast.Inspect(fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
@@ -66,6 +50,27 @@ func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index
 	})
 	flow.Errors.GRPCCodes = unique(flow.Errors.GRPCCodes)
 	return flow
+}
+
+func buildFlowHeader(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl) model.APIFlow {
+	pos := fset.Position(fn.Pos())
+	receiverType := receiverName(fn)
+	return model.APIFlow{
+		Name: fn.Name.Name,
+		Kind: "grpc",
+		Entrypoint: model.Entrypoint{
+			Symbol: receiverType + "." + fn.Name.Name,
+			File:   source.displayPath,
+			Line:   pos.Line,
+		},
+		Request: model.TypeRef{
+			Type: typeString(fn.Type.Params.List[1].Type),
+		},
+		Response: model.TypeRef{
+			Type: typeString(fn.Type.Results.List[0].Type),
+		},
+		Confidence: model.Confidence{Overall: "medium"},
+	}
 }
 
 func traceFunctionCalls(
