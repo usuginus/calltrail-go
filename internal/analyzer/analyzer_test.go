@@ -121,6 +121,29 @@ func TestAnalyzeMissingRPCReturnsNoFlows(t *testing.T) {
 	}
 }
 
+func TestAnalyzeShortRPCFilterCanMatchMultipleHandlers(t *testing.T) {
+	flows, err := Analyze([]string{"testdata/duplicate"}, Options{RPC: "CreateDocument"})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 2 {
+		t.Fatalf("len(flows) = %d, want 2", len(flows))
+	}
+}
+
+func TestAnalyzeAllowsReceiverQualifiedRPCFilter(t *testing.T) {
+	flows, err := Analyze([]string{"testdata/duplicate"}, Options{RPC: "userService.CreateDocument"})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+	if flows[0].Entrypoint.Symbol != "userService.CreateDocument" {
+		t.Fatalf("entrypoint symbol = %q, want userService.CreateDocument", flows[0].Entrypoint.Symbol)
+	}
+}
+
 func TestAnalyzeDepthThreeFollowsNestedStructFieldCandidate(t *testing.T) {
 	flows, err := Analyze([]string{"testdata/simple"}, Options{Depth: 3})
 	if err != nil {

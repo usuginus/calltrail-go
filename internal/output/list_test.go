@@ -23,7 +23,9 @@ func TestWriteList(t *testing.T) {
 		t.Fatalf("WriteList returned error: %v", err)
 	}
 
-	want := "GetFoo\tServer.GetFoo\thandler.go:12\n"
+	want := "| rpc | handler | location |\n" +
+		"| --- | --- | --- |\n" +
+		"| `GetFoo` | `Server.GetFoo` | `handler.go:12` |\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("list output = %q, want %q", got, want)
 	}

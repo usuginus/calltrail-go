@@ -63,11 +63,37 @@ func TestRunListOutputsDetectedHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v\nstderr:\n%s", err, stderr.String())
 	}
-	if got := stdout.String(); got != "GetFoo\tServer.GetFoo\tinternal/analyzer/testdata/simple/handler.go:43\n" {
+	want := "| rpc | handler | location |\n" +
+		"| --- | --- | --- |\n" +
+		"| `GetFoo` | `Server.GetFoo` | `internal/analyzer/testdata/simple/handler.go:43` |\n"
+	if got := stdout.String(); got != want {
 		t.Fatalf("stdout = %q", got)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunListSupportsJSONFormat(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Run([]string{"../analyzer/testdata/simple", "--list", "--format", "json"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var flows []model.APIFlow
+	if err := json.Unmarshal(stdout.Bytes(), &flows); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+	if flows[0].Entrypoint.Symbol != "Server.GetFoo" {
+		t.Fatalf("entrypoint symbol = %q, want Server.GetFoo", flows[0].Entrypoint.Symbol)
 	}
 }
 
@@ -105,6 +131,45 @@ func TestRunJSONOutputsStructuredLayers(t *testing.T) {
 	}
 	if got := interfaceCalls[0].Implementations[0].Call.Symbol; got != "fooUsecase.GetFoo" {
 		t.Fatalf("implementation = %q, want fooUsecase.GetFoo", got)
+	}
+}
+
+func TestRunRejectsAmbiguousShortRPCFilter(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Run([]string{"../analyzer/testdata/duplicate", "--rpc", "CreateDocument", "--format", "json"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("Run returned nil, want ambiguous RPC error")
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	want := `calltrail-go: ambiguous --rpc "CreateDocument" matched 2 handlers; use one of: debugService.CreateDocument, userService.CreateDocument`
+	if !strings.Contains(stderr.String(), want) {
+		t.Fatalf("stderr does not contain %q:\n%s", want, stderr.String())
+	}
+}
+
+func TestRunAllowsReceiverQualifiedRPCFilter(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	err := Run([]string{"../analyzer/testdata/duplicate", "--rpc", "userService.CreateDocument", "--format", "json"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("Run returned error: %v\nstderr:\n%s", err, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	var flows []model.APIFlow
+	if err := json.Unmarshal(stdout.Bytes(), &flows); err != nil {
+		t.Fatalf("json.Unmarshal returned error: %v\nstdout:\n%s", err, stdout.String())
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+	if flows[0].Entrypoint.Symbol != "userService.CreateDocument" {
+		t.Fatalf("entrypoint symbol = %q, want userService.CreateDocument", flows[0].Entrypoint.Symbol)
 	}
 }
 
