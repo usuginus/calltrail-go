@@ -153,18 +153,21 @@ repositories, at the cost of some precision versus a full type checker.
 ## Output
 
 Markdown output is deterministic and optimized for review, onboarding, and
-LLM-assisted documentation. Repeated calls to the same implementation are
-deduplicated and grouped under one operation with all call sites. Layer names
-come directly from the active rules, decision points are rendered as tables, and
-unexported helper calls are omitted so the output stays readable without
-project-specific presentation rules baked into the binary.
+LLM-assisted documentation. It renders a static call tree from syntax-driven
+call relationships, then adds a compact function index with locations and
+occurrence counts. Layer names come directly from the active rules, decision
+points are rendered as tables, and unexported helper calls are omitted so the
+output stays readable without project-specific presentation rules baked into the
+binary. Interface implementations are static candidates, not runtime traces.
 Decision-point tables focus on the calls selected directly by an interface,
-branch, or dispatch; deeper dependencies stay in the layer summary.
+branch, or dispatch; deeper dependencies stay in the call tree and function
+index.
 
 ```markdown
 ## GetFoo
 
 ### execution summary
+
 - kind: `grpc`
 - handler: `Server.GetFoo` (internal/adapter/grpc/foo.go:12)
 - request: `*pb.GetFooRequest`
@@ -178,29 +181,49 @@ branch, or dispatch; deeper dependencies stay in the layer summary.
   - branches: 2
   - dispatches: 1
 
-### layer summary
+### call tree
+
+- [handler] `Server.GetFoo` (internal/adapter/grpc/foo.go:12)
+  - [usecase] `s.fooUsecase.GetFoo` (internal/adapter/grpc/foo.go:18)
+    - [usecase] `fooUsecase.GetFoo` (internal/usecase/foo.go:20)
+      - [repository] `u.repositories.Foo.FindFoo` (internal/usecase/foo.go:24)
+        - [repository] `FooRepository.FindFoo` (internal/repository/foo_repository.go:30)
+      - [external_client] `u.fooClient.GetFoo` (internal/usecase/foo.go:28)
+        - [external_client] `fooClient.GetFoo` (internal/client/foo.go:30)
+
+### function index
+
 #### usecase
-- `fooUsecase.GetFoo`
-  - called from: `s.fooUsecase.GetFoo` (internal/adapter/grpc/foo.go:18)
-  - implementation: internal/usecase/foo.go:20
+
+| function | location | occurrences |
+| --- | --- | ---: |
+| `s.fooUsecase.GetFoo` | `internal/adapter/grpc/foo.go:18` | 1 |
+| `fooUsecase.GetFoo` | `internal/usecase/foo.go:20` | 1 |
 
 #### repository
-- `FooRepository.FindFoo`
-  - called from: `u.repositories.Foo.FindFoo` (internal/usecase/foo.go:24)
-  - implementation: internal/repository/foo_repository.go:30
+
+| function | location | occurrences |
+| --- | --- | ---: |
+| `u.repositories.Foo.FindFoo` | `internal/usecase/foo.go:24` | 1 |
+| `FooRepository.FindFoo` | `internal/repository/foo_repository.go:30` | 1 |
 
 #### external_client
-- `fooClient.GetFoo`
-  - called from: `u.fooClient.GetFoo` (internal/usecase/foo.go:28)
-  - implementation: internal/client/foo.go:30
+
+| function | location | occurrences |
+| --- | --- | ---: |
+| `u.fooClient.GetFoo` | `internal/usecase/foo.go:28` | 1 |
+| `fooClient.GetFoo` | `internal/client/foo.go:30` | 1 |
 
 ### decision points
+
 #### interface calls
+
 | call | interface | candidates | resolution |
 | --- | --- | --- | --- |
 | `s.fooUsecase.GetFoo` (internal/adapter/grpc/foo.go:18) | `FooUsecase` | `fooUsecase.GetFoo` (internal/usecase/foo.go:20) expanded | single expanded |
 
 #### branches
+
 | function | condition | case | calls |
 | --- | --- | --- | --- |
 | `Server.GetFoo` (internal/adapter/grpc/foo.go:16) | type switch `req.Payload.(type)` | case `*pb.GetFooRequest_V1` | usecase: `fooUsecase.GetFoo` |
@@ -209,6 +232,7 @@ branch, or dispatch; deeper dependencies stay in the layer summary.
 | `fooUsecase.GetFoo` (internal/usecase/foo.go:36) | switch `req.Kind` | case `"remote"` | external_client: `FooClient.GetFoo` |
 
 #### dispatches
+
 | dispatch | case | calls |
 | --- | --- | --- |
 | `processor.Process` (internal/usecase/foo.go:42)<br>from `u.processors[cmd.Kind]`<br>interface: `FooProcessor` | case `KindCached` | application: `cachedProcessor.Process`<br>repository: `FooCacheRepository.FindFoo` |

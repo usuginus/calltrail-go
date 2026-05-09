@@ -15,7 +15,8 @@ func WriteMarkdown(w io.Writer, flows []model.APIFlow) error {
 			return err
 		}
 		writeExecutionSummary(w, flow)
-		writeLayerSummary(w, flow)
+		writeCallTree(w, flow)
+		writeFunctionIndex(w, flow)
 		writeDecisionPoints(w, flow)
 	}
 	return nil
@@ -23,6 +24,7 @@ func WriteMarkdown(w io.Writer, flows []model.APIFlow) error {
 
 func writeExecutionSummary(w io.Writer, flow model.APIFlow) {
 	fmt.Fprintln(w, "### execution summary")
+	fmt.Fprintln(w)
 	fmt.Fprintf(w, "- kind: `%s`\n", flow.Kind)
 	fmt.Fprintf(w, "- handler: %s\n", callReference(model.CallRef{
 		Symbol: flow.Entrypoint.Symbol,
@@ -71,97 +73,6 @@ func decisionPointCounts(flow model.APIFlow) (interfaceCalls int, branches int, 
 	return interfaceCalls, branches, dispatches
 }
 
-func writeLayerSummary(w io.Writer, flow model.APIFlow) {
-	allCalls := collectCalls(flow)
-	wrote := false
-	for _, layer := range collectLayerCalls(flow) {
-		if writeOperations(w, &wrote, layer.Name, layer.Calls, allCalls) {
-			continue
-		}
-	}
-	writeCalls(w, &wrote, "async", sortCalls(dedupeCalls(flow.Trail.Async)))
-	writeCalls(w, &wrote, "other", sortCalls(summarizeUnknown(flow.Trail.Unknown, operationCallsiteSymbols(flow))))
-}
-
-func writeOperations(w io.Writer, wrote *bool, title string, calls []model.CallRef, allCalls []model.CallRef) bool {
-	operations := sortedOperationSummaries(calls, allCalls)
-	if len(operations) == 0 {
-		return false
-	}
-	writeLayerSummaryHeading(w, wrote)
-	fmt.Fprintf(w, "#### %s\n", title)
-	for _, operation := range operations {
-		fmt.Fprintf(w, "- `%s`\n", operation.Symbol)
-		writeCalledFrom(w, operation.CalledFrom)
-		if operation.HasImplementation {
-			fmt.Fprintf(w, "  - implementation: %s:%d\n", operation.Implementation.File, operation.Implementation.Line)
-		}
-		writeRelatedCalls(w, operation.Related)
-	}
-	fmt.Fprintln(w)
-	return true
-}
-
-func writeLayerSummaryHeading(w io.Writer, wrote *bool) {
-	if *wrote {
-		return
-	}
-	fmt.Fprintln(w, "### layer summary")
-	*wrote = true
-}
-
-func writeCalledFrom(w io.Writer, calls []model.CallRef) {
-	calls = sortCalls(dedupeCalls(calls))
-	if len(calls) == 0 {
-		return
-	}
-	if len(calls) == 1 {
-		call := calls[0]
-		if call.File == "" {
-			fmt.Fprintf(w, "  - called from: `%s`\n", call.Symbol)
-			return
-		}
-		fmt.Fprintf(w, "  - called from: `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
-		return
-	}
-	fmt.Fprintln(w, "  - called from:")
-	for _, call := range calls {
-		if call.File == "" {
-			fmt.Fprintf(w, "    - `%s`\n", call.Symbol)
-			continue
-		}
-		fmt.Fprintf(w, "    - `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
-	}
-}
-
-func writeRelatedCalls(w io.Writer, calls []model.CallRef) {
-	calls = sortCalls(dedupeCalls(calls))
-	if len(calls) == 0 {
-		return
-	}
-	if len(calls) == 1 {
-		call := calls[0]
-		fmt.Fprintf(w, "  - related internal call: `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
-		return
-	}
-	fmt.Fprintln(w, "  - related internal calls:")
-	for _, call := range calls {
-		fmt.Fprintf(w, "    - `%s` (%s:%d)\n", call.Symbol, call.File, call.Line)
-	}
-}
-
-func writeCalls(w io.Writer, wrote *bool, title string, calls []model.CallRef) {
-	if len(calls) == 0 {
-		return
-	}
-	writeLayerSummaryHeading(w, wrote)
-	fmt.Fprintf(w, "#### %s\n", title)
-	for _, call := range calls {
-		fmt.Fprintf(w, "- %s\n", callReference(call))
-	}
-	fmt.Fprintln(w)
-}
-
 func writeDecisionPoints(w io.Writer, flow model.APIFlow) {
 	hasInterfaceCalls := len(summarizeInterfaceCalls(flow.Trail.InterfaceCalls)) > 0
 	hasBranches := len(flow.Trail.Branches) > 0
@@ -171,6 +82,7 @@ func writeDecisionPoints(w io.Writer, flow model.APIFlow) {
 	}
 
 	fmt.Fprintln(w, "### decision points")
+	fmt.Fprintln(w)
 	writeInterfaceCallsTable(w, flow.Trail.InterfaceCalls)
 	writeBranchesTable(w, flow.Trail.Branches)
 	writeDispatchesTable(w, flow.Trail.Dispatches)
@@ -183,6 +95,7 @@ func writeInterfaceCallsTable(w io.Writer, calls []model.InterfaceCallTrace) {
 	}
 
 	fmt.Fprintln(w, "#### interface calls")
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "| call | interface | candidates | resolution |")
 	fmt.Fprintln(w, "| --- | --- | --- | --- |")
 	for _, call := range calls {
@@ -280,6 +193,7 @@ func writeBranchesTable(w io.Writer, branches []model.BranchTrace) {
 	}
 
 	fmt.Fprintln(w, "#### branches")
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "| function | condition | case | calls |")
 	fmt.Fprintln(w, "| --- | --- | --- | --- |")
 	for _, branch := range branches {
@@ -380,6 +294,7 @@ func writeDispatchesTable(w io.Writer, dispatches []model.DispatchTrace) {
 	}
 
 	fmt.Fprintln(w, "#### dispatches")
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, "| dispatch | case | calls |")
 	fmt.Fprintln(w, "| --- | --- | --- |")
 	for _, dispatch := range dispatches {
