@@ -24,9 +24,13 @@ func Analyze(paths []string, opts Options) ([]model.APIFlow, error) {
 		return nil, err
 	}
 
+	handlers := collectHandlers(sources, opts)
+	if len(handlers) == 0 {
+		return nil, nil
+	}
 	index := buildProjectIndex(fset, sources)
-	return collectHandlerFlows(sources, opts, func(source parsedSource, fn *ast.FuncDecl) model.APIFlow {
-		return buildFlow(fset, source, fn, index, opts)
+	return buildHandlerFlows(handlers, func(handler handlerInfo) model.APIFlow {
+		return buildFlow(fset, handler.source, handler.fn, index, opts)
 	}), nil
 }
 
@@ -38,12 +42,18 @@ func DetectHandlers(paths []string, opts Options) ([]model.APIFlow, error) {
 		return nil, err
 	}
 
-	return collectHandlerFlows(sources, opts, func(source parsedSource, fn *ast.FuncDecl) model.APIFlow {
-		return buildFlowHeader(fset, source, fn)
+	handlers := collectHandlers(sources, opts)
+	return buildHandlerFlows(handlers, func(handler handlerInfo) model.APIFlow {
+		return buildFlowHeader(fset, handler.source, handler.fn)
 	}), nil
 }
 
-type handlerFlowBuilder func(parsedSource, *ast.FuncDecl) model.APIFlow
+type handlerInfo struct {
+	source parsedSource
+	fn     *ast.FuncDecl
+}
+
+type handlerFlowBuilder func(handlerInfo) model.APIFlow
 
 func loadAnalysisInputs(paths []string, opts Options) (Options, *token.FileSet, []parsedSource, error) {
 	opts, err := normalizeOptions(opts)
@@ -58,8 +68,8 @@ func loadAnalysisInputs(paths []string, opts Options) (Options, *token.FileSet, 
 	return opts, fset, sources, nil
 }
 
-func collectHandlerFlows(sources []parsedSource, opts Options, build handlerFlowBuilder) []model.APIFlow {
-	var flows []model.APIFlow
+func collectHandlers(sources []parsedSource, opts Options) []handlerInfo {
+	var handlers []handlerInfo
 	for _, source := range sources {
 		for _, decl := range source.file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -69,8 +79,16 @@ func collectHandlerFlows(sources []parsedSource, opts Options, build handlerFlow
 			if opts.RPC != "" && fn.Name.Name != opts.RPC {
 				continue
 			}
-			flows = append(flows, build(source, fn))
+			handlers = append(handlers, handlerInfo{source: source, fn: fn})
 		}
+	}
+	return handlers
+}
+
+func buildHandlerFlows(handlers []handlerInfo, build handlerFlowBuilder) []model.APIFlow {
+	flows := make([]model.APIFlow, 0, len(handlers))
+	for _, handler := range handlers {
+		flows = append(flows, build(handler))
 	}
 	return flows
 }
