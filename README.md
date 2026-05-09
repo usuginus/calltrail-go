@@ -277,7 +277,7 @@ well.
 ## Flags
 
 ```text
---rpc string       filter by RPC/API handler name
+--rpc string       filter by RPC/API handler name or receiver-qualified symbol
 --list             list detected handlers and exit
 --depth int        call extraction depth (default 3)
 --format string    output format: markdown or json (default markdown)
@@ -288,8 +288,12 @@ Flags can be placed before or after paths:
 
 ```sh
 calltrail-go ./... --rpc GetFoo
+calltrail-go ./... --rpc Server.GetFoo
 calltrail-go --rpc GetFoo ./...
 ```
+
+If multiple handlers share the same method name, use the receiver-qualified
+symbol shown by `--list`, such as `Server.GetFoo`.
 
 ## Troubleshooting
 

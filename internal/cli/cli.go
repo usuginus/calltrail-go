@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/usuginus/calltrail-go/internal/analyzer"
@@ -61,6 +62,10 @@ func runAnalyze(stdout io.Writer, stderr io.Writer, opts Options, ruleSet rules.
 	if len(flows) == 0 {
 		writeNoResults(stderr, opts, ruleSet)
 	}
+	if err := rejectAmbiguousRPC(opts, flows); err != nil {
+		fmt.Fprintf(stderr, "calltrail-go: %v\n", err)
+		return err
+	}
 	return writeAnalysisOutput(stdout, stderr, opts, flows)
 }
 
@@ -82,6 +87,25 @@ func analyzerOptions(opts Options, ruleSet rules.RuleSet) analyzer.Options {
 		Depth: opts.Depth,
 		Rules: ruleSet,
 	}
+}
+
+func rejectAmbiguousRPC(opts Options, flows []model.APIFlow) error {
+	if opts.RPC == "" || strings.Contains(opts.RPC, ".") || len(flows) <= 1 {
+		return nil
+	}
+
+	symbols := make([]string, 0, len(flows))
+	for _, flow := range flows {
+		symbols = append(symbols, flow.Entrypoint.Symbol)
+	}
+	sort.Strings(symbols)
+
+	return fmt.Errorf(
+		"ambiguous --rpc %q matched %d handlers; use one of: %s",
+		opts.RPC,
+		len(flows),
+		strings.Join(symbols, ", "),
+	)
 }
 
 func writeAnalysisOutput(stdout io.Writer, stderr io.Writer, opts Options, flows []model.APIFlow) error {
@@ -111,7 +135,7 @@ func Parse(args []string, stderr io.Writer) (Options, error) {
 	fs := flag.NewFlagSet("calltrail-go", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.Format, "format", defaultFormat, "output format: markdown or json")
-	fs.StringVar(&opts.RPC, "rpc", "", "filter by RPC/API handler name")
+	fs.StringVar(&opts.RPC, "rpc", "", "filter by RPC/API handler name or receiver-qualified symbol")
 	fs.IntVar(&opts.Depth, "depth", defaultDepth, "call extraction depth")
 	fs.StringVar(&opts.Config, "config", "", "path to .calltrail.yaml")
 	fs.BoolVar(&opts.List, "list", false, "list detected handlers and exit")
@@ -147,6 +171,7 @@ func usageText() string {
 Examples:
   calltrail-go ./...
   calltrail-go ./... --rpc GetFoo
+  calltrail-go ./... --rpc Server.GetFoo
   calltrail-go ./... --rpc GetFoo --depth 5
   calltrail-go ./... --list
   calltrail-go ./... --format json

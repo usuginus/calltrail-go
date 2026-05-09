@@ -3,6 +3,7 @@ package analyzer
 import (
 	"go/ast"
 	"go/token"
+	"strings"
 
 	"github.com/usuginus/calltrail-go/internal/model"
 	"github.com/usuginus/calltrail-go/internal/rules"
@@ -76,13 +77,24 @@ func collectHandlers(sources []parsedSource, opts Options) []handlerInfo {
 			if !ok || !isHandler(fn, source.file.Name.Name, source.displayPath, opts.Rules.Handlers) {
 				continue
 			}
-			if opts.RPC != "" && fn.Name.Name != opts.RPC {
+			if !handlerMatchesRPC(fn, opts.RPC) {
 				continue
 			}
 			handlers = append(handlers, handlerInfo{source: source, fn: fn})
 		}
 	}
 	return handlers
+}
+
+func handlerMatchesRPC(fn *ast.FuncDecl, rpc string) bool {
+	if rpc == "" {
+		return true
+	}
+	if strings.Contains(rpc, ".") {
+		methodSuffix := "." + fn.Name.Name
+		return strings.HasSuffix(rpc, methodSuffix) && receiverName(fn) == strings.TrimSuffix(rpc, methodSuffix)
+	}
+	return fn.Name.Name == rpc
 }
 
 func buildHandlerFlows(handlers []handlerInfo, build handlerFlowBuilder) []model.APIFlow {
