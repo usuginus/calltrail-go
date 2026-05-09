@@ -187,6 +187,30 @@ func TestAnalyzeUsesConfiguredLayerNameInTrail(t *testing.T) {
 	}
 }
 
+func TestDetectHandlersReturnsHandlerHeadersOnly(t *testing.T) {
+	flows, err := DetectHandlers([]string{"testdata/simple"}, Options{})
+	if err != nil {
+		t.Fatalf("DetectHandlers returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	if flow.Name != "GetFoo" {
+		t.Fatalf("flow.Name = %q, want GetFoo", flow.Name)
+	}
+	if flow.Entrypoint.Symbol != "Server.GetFoo" {
+		t.Fatalf("entrypoint symbol = %q, want Server.GetFoo", flow.Entrypoint.Symbol)
+	}
+	if flow.Request.Type != "*pb.GetFooRequest" {
+		t.Fatalf("request type = %q, want *pb.GetFooRequest", flow.Request.Type)
+	}
+	if len(flow.Trail.Layers) != 0 || len(flow.Trail.InterfaceCalls) != 0 || len(flow.Trail.Branches) != 0 {
+		t.Fatalf("flow trail = %#v, want empty", flow.Trail)
+	}
+}
+
 func TestAnalyzeGRPCBasicExample(t *testing.T) {
 	flows, err := Analyze([]string{"../../examples/grpc-basic"}, Options{Depth: 3})
 	if err != nil {

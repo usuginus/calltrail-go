@@ -46,11 +46,14 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "calltrail-go: %v\n", err)
 		return err
 	}
-	flows, err := analyzer.Analyze(opts.Paths, analyzer.Options{
-		RPC:   opts.RPC,
-		Depth: opts.Depth,
-		Rules: ruleSet,
-	})
+	if opts.List {
+		return runList(stdout, stderr, opts, ruleSet)
+	}
+	return runAnalyze(stdout, stderr, opts, ruleSet)
+}
+
+func runAnalyze(stdout io.Writer, stderr io.Writer, opts Options, ruleSet rules.RuleSet) error {
+	flows, err := analyzer.Analyze(opts.Paths, analyzerOptions(opts, ruleSet))
 	if err != nil {
 		fmt.Fprintf(stderr, "calltrail-go: %v\n", err)
 		return err
@@ -58,13 +61,30 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) error {
 	if len(flows) == 0 {
 		writeNoResults(stderr, opts, ruleSet)
 	}
-	return writeOutput(stdout, stderr, opts, flows)
+	return writeAnalysisOutput(stdout, stderr, opts, flows)
 }
 
-func writeOutput(stdout io.Writer, stderr io.Writer, opts Options, flows []model.APIFlow) error {
-	if opts.List {
-		return output.WriteList(stdout, flows)
+func runList(stdout io.Writer, stderr io.Writer, opts Options, ruleSet rules.RuleSet) error {
+	flows, err := analyzer.DetectHandlers(opts.Paths, analyzerOptions(opts, ruleSet))
+	if err != nil {
+		fmt.Fprintf(stderr, "calltrail-go: %v\n", err)
+		return err
 	}
+	if len(flows) == 0 {
+		writeNoResults(stderr, opts, ruleSet)
+	}
+	return output.WriteList(stdout, flows)
+}
+
+func analyzerOptions(opts Options, ruleSet rules.RuleSet) analyzer.Options {
+	return analyzer.Options{
+		RPC:   opts.RPC,
+		Depth: opts.Depth,
+		Rules: ruleSet,
+	}
+}
+
+func writeAnalysisOutput(stdout io.Writer, stderr io.Writer, opts Options, flows []model.APIFlow) error {
 	switch opts.Format {
 	case "json":
 		enc := json.NewEncoder(stdout)
