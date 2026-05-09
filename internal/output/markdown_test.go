@@ -38,7 +38,7 @@ func TestWriteMarkdownUsesConfiguredLayerNames(t *testing.T) {
 	}
 
 	got := buf.String()
-	if !strings.Contains(got, "### domain\n- `entity.Foo.Validate`") {
+	if !strings.Contains(got, "### layer summary\n#### domain\n- `entity.Foo.Validate`") {
 		t.Fatalf("markdown output does not include configured layer:\n%s", got)
 	}
 }
@@ -177,6 +177,7 @@ func TestWriteMarkdownIncludesBranchSummary(t *testing.T) {
 									{
 										Name: "external_client",
 										Calls: []model.CallRef{
+											{Symbol: "a.index.Index", Receiver: "a.index", Method: "Index", File: "application.go", Line: 32, Depth: 2, Via: "documentApplication.ProcessDocument"},
 											{Symbol: "previewClient.Index", Receiver: "previewClient", Method: "Index", File: "external_client.go", Line: 7, Depth: 3, Via: "a.index.Index"},
 										},
 									},
@@ -188,6 +189,7 @@ func TestWriteMarkdownIncludesBranchSummary(t *testing.T) {
 									{
 										Name: "domain",
 										Calls: []model.CallRef{
+											{Symbol: "a.policy.RejectUnsupportedMode", Receiver: "a.policy", Method: "RejectUnsupportedMode", File: "application.go", Line: 42, Depth: 2, Via: "documentApplication.ProcessDocument"},
 											{Symbol: "documentPolicy.RejectUnsupportedMode", Receiver: "documentPolicy", Method: "RejectUnsupportedMode", File: "domain.go", Line: 24, Depth: 3, Via: "a.policy.RejectUnsupportedMode"},
 										},
 									},
@@ -205,13 +207,72 @@ func TestWriteMarkdownIncludesBranchSummary(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"### Branches\n- `documentApplication.ProcessDocument` switch `cmd.Mode` (application.go:24)",
-		"  - case `\"publish\"`\n    - persistence: `documentStore.Publish`\n    - external_client: `previewClient.Index`",
-		"  - default\n    - domain: `documentPolicy.RejectUnsupportedMode`",
+		"### decision points\n#### branches\n| function | condition | case | calls |",
+		"| `documentApplication.ProcessDocument` (application.go:24) | switch `cmd.Mode` | case `\"publish\"` | persistence: `documentStore.Publish`<br>external_client: `previewClient.Index` |",
+		"| `documentApplication.ProcessDocument` (application.go:24) | switch `cmd.Mode` | default | domain: `documentPolicy.RejectUnsupportedMode` |",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestWriteMarkdownBranchSummaryKeepsDirectDecisionCalls(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name:       "GetDashboard",
+			Kind:       "grpc",
+			Entrypoint: model.Entrypoint{Symbol: "Service.GetDashboard", File: "handler.go", Line: 10},
+			Request:    model.TypeRef{Type: "*GetDashboardRequest"},
+			Response:   model.TypeRef{Type: "*Dashboard"},
+			Trail: model.Trail{
+				Branches: []model.BranchTrace{
+					{
+						Kind:     "type_switch",
+						Function: "Service.GetDashboard",
+						Expr:     "req := in.GetRequest().(type)",
+						File:     "handler.go",
+						Line:     11,
+						Cases: []model.BranchCase{
+							{
+								Labels: []string{"*GetDashboardRequest_V1"},
+								Layers: []model.LayerCalls{
+									{
+										Name: "usecase",
+										Calls: []model.CallRef{
+											{Symbol: "s.dashboard.Get", Receiver: "s.dashboard", Method: "Get", File: "handler.go", Line: 14, Depth: 1, Via: "Service.GetDashboard"},
+											{Symbol: "Dashboard.Get", Receiver: "Dashboard", Method: "Get", File: "dashboard.go", Line: 20, Depth: 2, Via: "s.dashboard.Get"},
+										},
+									},
+									{
+										Name: "repository",
+										Calls: []model.CallRef{
+											{Symbol: "DashboardRepository.Find", Receiver: "DashboardRepository", Method: "Find", File: "repository.go", Line: 12, Depth: 3, Via: "Dashboard.Get"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	want := "| `Service.GetDashboard` (handler.go:11) | type switch `req := in.GetRequest().(type)` | case `*GetDashboardRequest_V1` | usecase: `Dashboard.Get` |"
+	if !strings.Contains(got, want) {
+		t.Fatalf("markdown output does not contain direct branch summary %q:\n%s", want, got)
+	}
+	if !strings.Contains(got, "#### repository\n- `DashboardRepository.Find`") {
+		t.Fatalf("markdown layer summary does not include transitive branch details:\n%s", got)
+	}
+	if strings.Contains(got, "| `Service.GetDashboard` (handler.go:11) | type switch `req := in.GetRequest().(type)` | case `*GetDashboardRequest_V1` | usecase: `Dashboard.Get`<br>repository: `DashboardRepository.Find` |") {
+		t.Fatalf("markdown branch summary includes transitive implementation details:\n%s", got)
 	}
 }
 
@@ -282,14 +343,55 @@ func TestWriteMarkdownIncludesDispatchSummary(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"### Dispatches\n- `processor.Process` dispatched from `a.processors[cmd.Kind]` (application.go:44)",
-		"  - interface: `DocumentProcessor`",
-		"  - case `KindMarkdown`\n    - application: `markdownProcessor.Process`\n    - persistence: `documentStore.SaveMarkdown`",
-		"  - case `KindImage`\n    - application: `imageProcessor.Process`\n    - external_client: `previewClient.RenderImage`",
+		"### decision points\n#### dispatches\n| dispatch | case | calls |",
+		"| `processor.Process` (application.go:44)<br>from `a.processors[cmd.Kind]`<br>interface: `DocumentProcessor` | case `KindMarkdown` | application: `markdownProcessor.Process`<br>persistence: `documentStore.SaveMarkdown` |",
+		"| `processor.Process` (application.go:44)<br>from `a.processors[cmd.Kind]`<br>interface: `DocumentProcessor` | case `KindImage` | application: `imageProcessor.Process`<br>external_client: `previewClient.RenderImage` |",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestWriteMarkdownOrdersDecisionPointSectionsAndOmitsErrorCodes(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteMarkdown(&buf, []model.APIFlow{
+		{
+			Name:       "ProcessDocument",
+			Kind:       "grpc",
+			Entrypoint: model.Entrypoint{Symbol: "Service.ProcessDocument", File: "handler.go", Line: 10},
+			Request:    model.TypeRef{Type: "*ProcessDocumentRequest"},
+			Response:   model.TypeRef{Type: "*ProcessDocumentResponse"},
+			Trail: model.Trail{
+				InterfaceCalls: []model.InterfaceCallTrace{
+					{Call: model.CallRef{Symbol: "s.processor.Process", File: "handler.go", Line: 12}, Interface: "Processor"},
+				},
+				Branches: []model.BranchTrace{
+					{Kind: "switch", Function: "Service.ProcessDocument", Expr: "req.Kind", File: "handler.go", Line: 14},
+				},
+				Dispatches: []model.DispatchTrace{
+					{Table: "processors", Key: "req.Kind", Call: model.CallRef{Symbol: "processor.Process", File: "handler.go", Line: 18}},
+				},
+			},
+			Errors: model.ErrorSummary{GRPCCodes: []string{"InvalidArgument"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("WriteMarkdown returned error: %v", err)
+	}
+
+	got := buf.String()
+	interfaceIndex := strings.Index(got, "#### interface calls")
+	branchesIndex := strings.Index(got, "#### branches")
+	dispatchesIndex := strings.Index(got, "#### dispatches")
+	if interfaceIndex < 0 || branchesIndex < 0 || dispatchesIndex < 0 {
+		t.Fatalf("markdown output is missing decision point sections:\n%s", got)
+	}
+	if !(interfaceIndex < branchesIndex && branchesIndex < dispatchesIndex) {
+		t.Fatalf("markdown decision point sections are not in stable order:\n%s", got)
+	}
+	if strings.Contains(got, "Error Codes") || strings.Contains(got, "InvalidArgument") {
+		t.Fatalf("markdown output includes project-specific error summary:\n%s", got)
 	}
 }
 
@@ -322,7 +424,7 @@ func TestWriteMarkdownUsesConfiguredLayerForExternalCalls(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"### external_client\n- `s.clients.UserAccount.GetContract`",
+		"#### external_client\n- `s.clients.UserAccount.GetContract`",
 		"- `s.clients.UserAccount.GetPaymentConfig`",
 		"- `archive.GetDocument`\n  - called from: `clients.Archive.GetDocument`",
 	} {
@@ -379,9 +481,9 @@ func TestWriteMarkdownIncludesEntrypointTypeSwitchAsBranch(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"### Branches\n- `Service.GetDashboard` type switch `payload := req.Payload.(type)` (handler.go:12)",
-		"  - case `*GetDashboardRequest_V1`\n    - usecase: `dashboard.Get`",
-		"  - default\n    - other: `errors.NewInvalidArgumentErr`",
+		"### decision points\n#### branches\n| function | condition | case | calls |",
+		"| `Service.GetDashboard` (handler.go:12) | type switch `payload := req.Payload.(type)` | case `*GetDashboardRequest_V1` | usecase: `dashboard.Get` |",
+		"| `Service.GetDashboard` (handler.go:12) | type switch `payload := req.Payload.(type)` | default | other: `errors.NewInvalidArgumentErr` |",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
@@ -427,10 +529,8 @@ func TestWriteMarkdownIncludesInterfaceCallSummary(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"### Interface Calls\n- `s.fooUsecase.GetFoo` (handler.go:12)",
-		"  - interface: `FooUsecase`",
-		"    - `fooUsecase.GetFoo` (usecase.go:20) expanded",
-		"    - `otherFooUsecase.GetFoo` (other_usecase.go:18) candidate",
+		"### decision points\n#### interface calls\n| call | interface | candidates | resolution |",
+		"| `s.fooUsecase.GetFoo` (handler.go:12) | `FooUsecase` | `fooUsecase.GetFoo` (usecase.go:20) expanded<br>`otherFooUsecase.GetFoo` (other_usecase.go:18) candidate | partial |",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("markdown output does not contain %q:\n%s", want, got)
@@ -470,8 +570,8 @@ func TestWriteMarkdownSplitsUnresolvedInterfaceCalls(t *testing.T) {
 
 	got := buf.String()
 	for _, want := range []string{
-		"### Interface Calls\n- `s.fooUsecase.GetFoo` (handler.go:12)",
-		"### Unresolved Interface Calls\n- `s.inventory.List` (usecase.go:24)\n  - interface: `InventoryClient`",
+		"| `s.fooUsecase.GetFoo` (handler.go:12) | `FooUsecase` | `fooUsecase.GetFoo` (usecase.go:20) expanded | single expanded |",
+		"| `s.inventory.List` (usecase.go:24) | `InventoryClient` | - | unresolved |",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("markdown output does not contain %q:\n%s", want, got)

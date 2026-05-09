@@ -17,12 +17,58 @@ type operationSummary struct {
 
 func collectCalls(flow model.APIFlow) []model.CallRef {
 	var calls []model.CallRef
-	for _, layer := range flow.Trail.Layers {
+	for _, layer := range collectLayerCalls(flow) {
 		calls = append(calls, layer.Calls...)
 	}
 	calls = append(calls, flow.Trail.Async...)
 	calls = append(calls, flow.Trail.Unknown...)
+	for _, branch := range flow.Trail.Branches {
+		for _, branchCase := range branch.Cases {
+			calls = append(calls, branchCase.Unknown...)
+		}
+	}
+	for _, dispatch := range flow.Trail.Dispatches {
+		for _, dispatchCase := range dispatch.Cases {
+			calls = append(calls, dispatchCase.Unknown...)
+		}
+	}
 	return calls
+}
+
+func collectLayerCalls(flow model.APIFlow) []model.LayerCalls {
+	var layers []model.LayerCalls
+	for _, layer := range flow.Trail.Layers {
+		layers = appendLayerCalls(layers, layer)
+	}
+	for _, branch := range flow.Trail.Branches {
+		for _, branchCase := range branch.Cases {
+			for _, layer := range branchCase.Layers {
+				layers = appendLayerCalls(layers, layer)
+			}
+		}
+	}
+	for _, dispatch := range flow.Trail.Dispatches {
+		for _, dispatchCase := range dispatch.Cases {
+			for _, layer := range dispatchCase.Layers {
+				layers = appendLayerCalls(layers, layer)
+			}
+		}
+	}
+	return layers
+}
+
+func appendLayerCalls(layers []model.LayerCalls, next model.LayerCalls) []model.LayerCalls {
+	if next.Name == "" || len(next.Calls) == 0 {
+		return layers
+	}
+	for i := range layers {
+		if layers[i].Name == next.Name {
+			layers[i].Calls = appendUniqueCalls(layers[i].Calls, next.Calls...)
+			return layers
+		}
+	}
+	next.Calls = dedupeCalls(next.Calls)
+	return append(layers, next)
 }
 
 func summarizeOperations(calls []model.CallRef, allCalls []model.CallRef) []operationSummary {
@@ -140,7 +186,7 @@ func relatedInternalCalls(children []model.CallRef, implementation model.CallRef
 
 func operationCallsiteSymbols(flow model.APIFlow) map[string]bool {
 	symbols := make(map[string]bool)
-	for _, layer := range flow.Trail.Layers {
+	for _, layer := range collectLayerCalls(flow) {
 		for _, call := range layer.Calls {
 			if call.Via != "" {
 				symbols[call.Via] = true
