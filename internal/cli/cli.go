@@ -78,7 +78,7 @@ func runList(stdout io.Writer, stderr io.Writer, opts Options, ruleSet rules.Rul
 	if len(flows) == 0 {
 		writeNoResults(stderr, opts, ruleSet)
 	}
-	return output.WriteList(stdout, flows)
+	return writeListOutput(stdout, stderr, opts, flows)
 }
 
 func analyzerOptions(opts Options, ruleSet rules.RuleSet) analyzer.Options {
@@ -106,6 +106,28 @@ func rejectAmbiguousRPC(opts Options, flows []model.APIFlow) error {
 		len(flows),
 		strings.Join(symbols, ", "),
 	)
+}
+
+func writeListOutput(stdout io.Writer, stderr io.Writer, opts Options, flows []model.APIFlow) error {
+	switch opts.Format {
+	case "json":
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(flows); err != nil {
+			fmt.Fprintf(stderr, "calltrail-go: encode json: %v\n", err)
+			return err
+		}
+	case "markdown", "md":
+		if err := output.WriteList(stdout, flows); err != nil {
+			fmt.Fprintf(stderr, "calltrail-go: write list: %v\n", err)
+			return err
+		}
+	default:
+		err := fmt.Errorf("unsupported format %q; use json or markdown", opts.Format)
+		fmt.Fprintf(stderr, "calltrail-go: %v\n", err)
+		return err
+	}
+	return nil
 }
 
 func writeAnalysisOutput(stdout io.Writer, stderr io.Writer, opts Options, flows []model.APIFlow) error {

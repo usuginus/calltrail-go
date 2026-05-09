@@ -37,6 +37,12 @@ List detected handlers first:
 calltrail-go ./... --list
 ```
 
+```md
+| rpc | handler | location |
+| --- | --- | --- |
+| `GetFoo` | `Server.GetFoo` | `internal/driver/grpc/foo.go:42` |
+```
+
 Analyze one RPC:
 
 ```sh
@@ -54,6 +60,7 @@ for another tool:
 
 ```sh
 calltrail-go ./... --rpc GetFoo --format json
+calltrail-go ./... --list --format json
 ```
 
 ## Examples
