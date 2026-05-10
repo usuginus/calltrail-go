@@ -130,21 +130,48 @@ func recordCall(
 	ruleSet rules.RuleSet,
 	stdlibPackageAliases map[string]bool,
 ) (model.CallRef, bool) {
+	decision := decideCallTrace(fset, file, call, scope, index, depth, via, ruleSet, stdlibPackageAliases)
+	if decision.GRPCCode != "" {
+		flow.Errors.GRPCCodes = append(flow.Errors.GRPCCodes, decision.GRPCCode)
+		return decision.Ref, false
+	}
+	if !decision.Trace {
+		return decision.Ref, false
+	}
+	appendCall(flow, decision.Ref, classify(decision.Ref, scope, ruleSet.Layers))
+	return decision.Ref, true
+}
+
+type callTraceDecision struct {
+	Ref      model.CallRef
+	GRPCCode string
+	Trace    bool
+}
+
+func decideCallTrace(
+	fset *token.FileSet,
+	file string,
+	call *ast.CallExpr,
+	scope scopeInfo,
+	index projectIndex,
+	depth int,
+	via string,
+	ruleSet rules.RuleSet,
+	stdlibPackageAliases map[string]bool,
+) callTraceDecision {
 	ref := callRef(fset, file, call, index, scope)
 	if ref.Symbol == "" {
-		return ref, false
+		return callTraceDecision{Ref: ref}
 	}
 	if code, ok := grpcCode(call); ok {
-		flow.Errors.GRPCCodes = append(flow.Errors.GRPCCodes, code)
-		return ref, false
+		return callTraceDecision{Ref: ref, GRPCCode: code}
 	}
 	if isNoiseCall(ref, ruleSet.Ignore, stdlibPackageAliases, scope) {
-		return ref, false
+		return callTraceDecision{Ref: ref}
 	}
 	ref.Depth = depth
 	ref.Via = via
-	appendCall(flow, ref, classify(ref, scope, ruleSet.Layers))
-	return ref, true
+	return callTraceDecision{Ref: ref, Trace: true}
 }
 
 func recordImplementation(fset *token.FileSet, flow *model.APIFlow, info functionInfo, via string, depth int, ruleSet rules.RuleSet) {

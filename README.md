@@ -1,6 +1,6 @@
 # calltrail-go
 
-`calltrail-go` maps Go RPC/API handlers to the downstream operations they call.
+`calltrail-go` maps Go RPC/API handlers to the downstream calls they make.
 
 It is built for code review, onboarding, documentation, and LLM-assisted
 analysis. The goal is not a perfect whole-program call graph. The goal is a
@@ -173,9 +173,9 @@ index.
 - request: `*pb.GetFooRequest`
 - response: `*pb.GetFooResponse`
 - layers:
-  - usecase: 1 operations
-  - repository: 1 operations
-  - external_client: 1 operations
+  - usecase: 1 call
+  - repository: 1 call
+  - external_client: 1 call
 - decision points:
   - interface calls: 1
   - branches: 2

@@ -49,7 +49,7 @@ func buildCallTree(flow model.APIFlow) callTreeNode {
 	}
 
 	childrenByVia := make(map[string][]callTreeEntry)
-	symbolFiles := callTreeSymbolFiles(entries)
+	filesBySymbol := callFilesBySymbol(entries)
 	var rootChildren []callTreeEntry
 	for _, entry := range entries {
 		switch {
@@ -60,33 +60,33 @@ func buildCallTree(flow model.APIFlow) callTreeNode {
 		}
 	}
 
-	root.Children = buildCallTreeChildren(rootChildren, childrenByVia, symbolFiles, map[string]bool{root.Call.Symbol: true})
+	root.Children = buildCallTreeChildren(rootChildren, childrenByVia, filesBySymbol, map[string]bool{root.Call.Symbol: true})
 	return root
 }
 
 func buildCallTreeChildren(
 	entries []callTreeEntry,
 	childrenByVia map[string][]callTreeEntry,
-	symbolFiles map[string]map[string]bool,
-	path map[string]bool,
+	filesBySymbol map[string]map[string]bool,
+	visitedSymbols map[string]bool,
 ) []callTreeNode {
 	entries = sortCallTreeEntries(dedupeCallTreeEntries(entries))
 	nodes := make([]callTreeNode, 0, len(entries))
 	for _, entry := range entries {
 		node := callTreeNode{Layer: entry.Layer, Call: entry.Call}
-		if !path[entry.Call.Symbol] {
-			nextPath := copySymbolPath(path)
-			nextPath[entry.Call.Symbol] = true
-			children := callTreeChildrenForParent(entry, childrenByVia[entry.Call.Symbol], symbolFiles)
-			node.Children = buildCallTreeChildren(children, childrenByVia, symbolFiles, nextPath)
+		if !visitedSymbols[entry.Call.Symbol] {
+			nextVisited := copyStringSet(visitedSymbols)
+			nextVisited[entry.Call.Symbol] = true
+			children := disambiguateCallTreeChildren(entry, childrenByVia[entry.Call.Symbol], filesBySymbol)
+			node.Children = buildCallTreeChildren(children, childrenByVia, filesBySymbol, nextVisited)
 		}
 		nodes = append(nodes, node)
 	}
 	return nodes
 }
 
-func callTreeChildrenForParent(parent callTreeEntry, children []callTreeEntry, symbolFiles map[string]map[string]bool) []callTreeEntry {
-	if len(children) <= 1 || len(symbolFiles[parent.Call.Symbol]) <= 1 {
+func disambiguateCallTreeChildren(parent callTreeEntry, children []callTreeEntry, filesBySymbol map[string]map[string]bool) []callTreeEntry {
+	if len(children) <= 1 || len(filesBySymbol[parent.Call.Symbol]) <= 1 {
 		return children
 	}
 
@@ -111,25 +111,11 @@ func writeCallTreeNode(w io.Writer, node callTreeNode, depth int) {
 
 func collectCallTreeEntries(flow model.APIFlow) []callTreeEntry {
 	var entries []callTreeEntry
-	for _, layer := range flow.Trail.Layers {
+	walkLayerCalls(flow, func(layer model.LayerCalls) {
 		entries = appendLayerCallTreeEntries(entries, layer.Name, layer.Calls)
-	}
-	for _, branch := range flow.Trail.Branches {
-		for _, branchCase := range branch.Cases {
-			for _, layer := range branchCase.Layers {
-				entries = appendLayerCallTreeEntries(entries, layer.Name, layer.Calls)
-			}
-		}
-	}
-	for _, dispatch := range flow.Trail.Dispatches {
-		for _, dispatchCase := range dispatch.Cases {
-			for _, layer := range dispatchCase.Layers {
-				entries = appendLayerCallTreeEntries(entries, layer.Name, layer.Calls)
-			}
-		}
-	}
+	})
 	entries = appendLayerCallTreeEntries(entries, "async", flow.Trail.Async)
-	entries = appendLayerCallTreeEntries(entries, "other", summarizeUnknown(collectUnknownCalls(flow), operationCallsiteSymbols(flow)))
+	entries = appendLayerCallTreeEntries(entries, "other", visibleUnknownCalls(collectFlowUnknownCalls(flow)))
 	return filterCallTreeEntries(entries)
 }
 
@@ -164,7 +150,7 @@ func filterCallTreeEntries(entries []callTreeEntry) []callTreeEntry {
 	return out
 }
 
-func callTreeSymbolFiles(entries []callTreeEntry) map[string]map[string]bool {
+func callFilesBySymbol(entries []callTreeEntry) map[string]map[string]bool {
 	out := make(map[string]map[string]bool, len(entries))
 	for _, entry := range entries {
 		if entry.Call.Symbol == "" || entry.Call.File == "" {
@@ -178,7 +164,7 @@ func callTreeSymbolFiles(entries []callTreeEntry) map[string]map[string]bool {
 	return out
 }
 
-func collectUnknownCalls(flow model.APIFlow) []model.CallRef {
+func collectFlowUnknownCalls(flow model.APIFlow) []model.CallRef {
 	calls := append([]model.CallRef(nil), flow.Trail.Unknown...)
 	for _, branch := range flow.Trail.Branches {
 		for _, branchCase := range branch.Cases {
@@ -228,9 +214,9 @@ func dedupeCallTreeEntries(entries []callTreeEntry) []callTreeEntry {
 	return out
 }
 
-func copySymbolPath(path map[string]bool) map[string]bool {
-	out := make(map[string]bool, len(path)+1)
-	for symbol := range path {
+func copyStringSet(values map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(values)+1)
+	for symbol := range values {
 		out[symbol] = true
 	}
 	return out

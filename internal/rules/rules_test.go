@@ -171,6 +171,49 @@ ignore_calls:
 	}
 }
 
+func TestRuleSetIsZeroChecksAllRuleGroups(t *testing.T) {
+	cases := []struct {
+		name string
+		rule RuleSet
+	}{
+		{
+			name: "handler signature",
+			rule: RuleSet{Handlers: HandlerRules{
+				Signature: HandlerSignatureRules{RequireErrorReturn: true},
+			}},
+		},
+		{
+			name: "ignore getter",
+			rule: RuleSet{Ignore: IgnoreRules{
+				Getters: IgnoreGetterRules{LocalValues: true},
+			}},
+		},
+		{
+			name: "ignore call prefix",
+			rule: RuleSet{Ignore: IgnoreRules{
+				Calls: IgnoreCallRules{FullNamePrefixes: []string{"log."}},
+			}},
+		},
+		{
+			name: "resolution",
+			rule: RuleSet{Resolution: ResolutionRules{
+				SkipImplementations: SkipImplementationRules{ReceiverNamePrefixes: []string{"Mock"}},
+			}},
+		},
+	}
+
+	if !((RuleSet{}).IsZero()) {
+		t.Fatal("empty RuleSet IsZero = false, want true")
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.rule.IsZero() {
+				t.Fatalf("RuleSet.IsZero = true for %#v", tc.rule)
+			}
+		})
+	}
+}
+
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

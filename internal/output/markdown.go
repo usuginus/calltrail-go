@@ -34,10 +34,10 @@ func writeExecutionSummary(w io.Writer, flow model.APIFlow) {
 	fmt.Fprintf(w, "- request: `%s`\n", flow.Request.Type)
 	fmt.Fprintf(w, "- response: `%s`\n", flow.Response.Type)
 
-	if counts := layerOperationCounts(flow); len(counts) > 0 {
+	if counts := layerCallCounts(flow); len(counts) > 0 {
 		fmt.Fprintln(w, "- layers:")
 		for _, count := range counts {
-			fmt.Fprintf(w, "  - %s: %d operations\n", count.Name, count.Count)
+			fmt.Fprintf(w, "  - %s: %d %s\n", count.Name, count.Count, plural(count.Count, "call"))
 		}
 	}
 
@@ -48,20 +48,19 @@ func writeExecutionSummary(w io.Writer, flow model.APIFlow) {
 	fmt.Fprintf(w, "  - dispatches: %d\n\n", dispatches)
 }
 
-type layerOperationCount struct {
+type layerCallCount struct {
 	Name  string
 	Count int
 }
 
-func layerOperationCounts(flow model.APIFlow) []layerOperationCount {
-	allCalls := collectCalls(flow)
-	var counts []layerOperationCount
+func layerCallCounts(flow model.APIFlow) []layerCallCount {
+	var counts []layerCallCount
 	for _, layer := range collectLayerCalls(flow) {
-		count := len(sortedOperationSummaries(layer.Calls, allCalls))
+		count := len(visibleLayerCalls(layer.Calls))
 		if count == 0 {
 			continue
 		}
-		counts = append(counts, layerOperationCount{Name: layer.Name, Count: count})
+		counts = append(counts, layerCallCount{Name: layer.Name, Count: count})
 	}
 	return counts
 }
@@ -212,11 +211,7 @@ func writeBranchesTable(w io.Writer, branches []model.BranchTrace) {
 }
 
 func branchFunctionCell(branch model.BranchTrace) string {
-	call := callReference(model.CallRef{Symbol: branch.Function, File: branch.File, Line: branch.Line})
-	if branch.Kind == "" {
-		return call
-	}
-	return call
+	return callReference(model.CallRef{Symbol: branch.Function, File: branch.File, Line: branch.Line})
 }
 
 func branchCondition(branch model.BranchTrace) string {
@@ -228,27 +223,27 @@ func branchCondition(branch model.BranchTrace) string {
 }
 
 func branchCaseCallsCell(branch model.BranchTrace, branchCase model.BranchCase) string {
-	layers, unknown := directBranchCaseCalls(branch, branchCase)
-	return layerCallsCell(layers, unknown, layerCalls(layers, unknown))
+	layers, unknown := directBranchCaseLayerCalls(branch, branchCase)
+	return layerCallsCell(layers, unknown)
 }
 
-func directBranchCaseCalls(branch model.BranchTrace, branchCase model.BranchCase) ([]model.LayerCalls, []model.CallRef) {
-	directSymbols := branchDirectSymbols(branch, branchCase)
+func directBranchCaseLayerCalls(branch model.BranchTrace, branchCase model.BranchCase) ([]model.LayerCalls, []model.CallRef) {
+	directSymbols := branchCaseDirectSymbols(branch, branchCase)
 	layers := filterLayers(branchCase.Layers, func(call model.CallRef) bool {
-		return isBranchDirectCall(branch, directSymbols, call)
+		return isDirectBranchCaseCall(branch, directSymbols, call)
 	})
 	var unknown []model.CallRef
 	for _, call := range branchCase.Unknown {
-		if isBranchDirectCall(branch, directSymbols, call) {
+		if isDirectBranchCaseCall(branch, directSymbols, call) {
 			unknown = append(unknown, call)
 		}
 	}
 	return layers, dedupeCalls(unknown)
 }
 
-func branchDirectSymbols(branch model.BranchTrace, branchCase model.BranchCase) map[string]bool {
+func branchCaseDirectSymbols(branch model.BranchTrace, branchCase model.BranchCase) map[string]bool {
 	symbols := make(map[string]bool)
-	for _, call := range branchCaseCalls(branchCase) {
+	for _, call := range allBranchCaseCalls(branchCase) {
 		if call.Via == branch.Function || call.Via == "" {
 			symbols[call.Symbol] = true
 		}
@@ -256,11 +251,11 @@ func branchDirectSymbols(branch model.BranchTrace, branchCase model.BranchCase) 
 	return symbols
 }
 
-func isBranchDirectCall(branch model.BranchTrace, directSymbols map[string]bool, call model.CallRef) bool {
+func isDirectBranchCaseCall(branch model.BranchTrace, directSymbols map[string]bool, call model.CallRef) bool {
 	return call.Via == branch.Function || call.Via == "" || directSymbols[call.Via]
 }
 
-func branchCaseCalls(branchCase model.BranchCase) []model.CallRef {
+func allBranchCaseCalls(branchCase model.BranchCase) []model.CallRef {
 	var calls []model.CallRef
 	for _, layer := range branchCase.Layers {
 		calls = append(calls, layer.Calls...)
@@ -330,16 +325,7 @@ func dispatchLookupDisplay(dispatch model.DispatchTrace) string {
 }
 
 func dispatchCaseCallsCell(dispatchCase model.DispatchCase) string {
-	return layerCallsCell(dispatchCase.Layers, dispatchCase.Unknown, dispatchCaseCalls(dispatchCase))
-}
-
-func dispatchCaseCalls(dispatchCase model.DispatchCase) []model.CallRef {
-	var calls []model.CallRef
-	for _, layer := range dispatchCase.Layers {
-		calls = append(calls, layer.Calls...)
-	}
-	calls = append(calls, dispatchCase.Unknown...)
-	return calls
+	return layerCallsCell(dispatchCase.Layers, dispatchCase.Unknown)
 }
 
 func dispatchCaseTitle(dispatchCase model.DispatchCase) string {
@@ -349,16 +335,16 @@ func dispatchCaseTitle(dispatchCase model.DispatchCase) string {
 	return "case " + inlineCodeList(dispatchCase.Labels)
 }
 
-func layerCallsCell(layers []model.LayerCalls, unknown []model.CallRef, allCalls []model.CallRef) string {
+func layerCallsCell(layers []model.LayerCalls, unknown []model.CallRef) string {
 	var parts []string
 	for _, layer := range layers {
-		operations := sortedOperationSummaries(layer.Calls, allCalls)
-		if len(operations) == 0 {
+		calls := visibleLayerCalls(layer.Calls)
+		if len(calls) == 0 {
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s: %s", layer.Name, operationNamesCell(operations)))
+		parts = append(parts, fmt.Sprintf("%s: %s", layer.Name, callNamesCell(calls)))
 	}
-	unknownCalls := sortCalls(summarizeUnknown(unknown, map[string]bool{}))
+	unknownCalls := visibleUnknownCalls(unknown)
 	if len(unknownCalls) > 0 {
 		parts = append(parts, fmt.Sprintf("other: %s", callNamesCell(unknownCalls)))
 	}
@@ -385,53 +371,12 @@ func filterLayers(layers []model.LayerCalls, keep func(model.CallRef) bool) []mo
 	return out
 }
 
-func layerCalls(layers []model.LayerCalls, unknown []model.CallRef) []model.CallRef {
-	var calls []model.CallRef
-	for _, layer := range layers {
-		calls = append(calls, layer.Calls...)
-	}
-	calls = append(calls, unknown...)
-	return calls
-}
-
-func operationNamesCell(operations []operationSummary) string {
-	var names []string
-	for _, operation := range operations {
-		names = append(names, inlineCode(operation.Symbol))
-	}
-	return strings.Join(names, ", ")
-}
-
 func callNamesCell(calls []model.CallRef) string {
 	var names []string
 	for _, call := range calls {
 		names = append(names, inlineCode(call.Symbol))
 	}
 	return strings.Join(names, ", ")
-}
-
-func sortedOperationSummaries(calls []model.CallRef, allCalls []model.CallRef) []operationSummary {
-	operations := summarizeOperations(calls, allCalls)
-	sort.SliceStable(operations, func(i, j int) bool {
-		left := operationAnchor(operations[i])
-		right := operationAnchor(operations[j])
-		if !sameCall(left, right) {
-			return callLess(left, right)
-		}
-		return operations[i].Symbol < operations[j].Symbol
-	})
-	return operations
-}
-
-func operationAnchor(operation operationSummary) model.CallRef {
-	calls := sortCalls(operation.CalledFrom)
-	if len(calls) > 0 {
-		return calls[0]
-	}
-	if operation.HasImplementation {
-		return operation.Implementation
-	}
-	return model.CallRef{Symbol: operation.Symbol}
 }
 
 func sortImplementationCandidates(candidates []model.ImplementationCandidate) []model.ImplementationCandidate {
@@ -508,4 +453,11 @@ func tableCell(value string) string {
 	value = strings.ReplaceAll(value, "|", `\|`)
 	value = strings.ReplaceAll(value, "\n", "<br>")
 	return value
+}
+
+func plural(count int, singular string) string {
+	if count == 1 {
+		return singular
+	}
+	return singular + "s"
 }
