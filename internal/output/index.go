@@ -14,6 +14,11 @@ type functionIndexEntry struct {
 	Occurrences int
 }
 
+type functionIndexLayer struct {
+	Name    string
+	Entries []functionIndexEntry
+}
+
 func writeFunctionIndex(w io.Writer, flow model.APIFlow) {
 	entries := buildFunctionIndexEntries(flow)
 	if len(entries) == 0 {
@@ -22,16 +27,12 @@ func writeFunctionIndex(w io.Writer, flow model.APIFlow) {
 
 	fmt.Fprintln(w, "### function index")
 	fmt.Fprintln(w)
-	for _, layer := range functionIndexLayerNames(entries) {
-		layerEntries := functionIndexEntriesForLayer(entries, layer)
-		if len(layerEntries) == 0 {
-			continue
-		}
-		fmt.Fprintf(w, "#### %s\n", layer)
+	for _, layer := range groupFunctionIndexEntries(entries) {
+		fmt.Fprintf(w, "#### %s\n", layer.Name)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "| function | location | occurrences |")
 		fmt.Fprintln(w, "| --- | --- | ---: |")
-		for _, entry := range layerEntries {
+		for _, entry := range layer.Entries {
 			fmt.Fprintf(
 				w,
 				"| %s | %s | %d |\n",
@@ -82,27 +83,21 @@ func buildFunctionIndexEntries(flow model.APIFlow) []functionIndexEntry {
 	return entries
 }
 
-func functionIndexLayerNames(entries []functionIndexEntry) []string {
-	var layers []string
-	seen := make(map[string]bool)
+func groupFunctionIndexEntries(entries []functionIndexEntry) []functionIndexLayer {
+	var layers []functionIndexLayer
+	index := make(map[string]int)
 	for _, entry := range entries {
-		if seen[entry.Layer] {
+		if existingIndex, ok := index[entry.Layer]; ok {
+			layers[existingIndex].Entries = append(layers[existingIndex].Entries, entry)
 			continue
 		}
-		seen[entry.Layer] = true
-		layers = append(layers, entry.Layer)
+		index[entry.Layer] = len(layers)
+		layers = append(layers, functionIndexLayer{
+			Name:    entry.Layer,
+			Entries: []functionIndexEntry{entry},
+		})
 	}
 	return layers
-}
-
-func functionIndexEntriesForLayer(entries []functionIndexEntry, layer string) []functionIndexEntry {
-	var out []functionIndexEntry
-	for _, entry := range entries {
-		if entry.Layer == layer {
-			out = append(out, entry)
-		}
-	}
-	return out
 }
 
 func locationCell(call model.CallRef) string {
