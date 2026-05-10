@@ -234,33 +234,16 @@ func recordBranchCall(
 	ruleSet rules.RuleSet,
 	stdlibPackageAliases map[string]bool,
 ) (model.CallRef, bool) {
-	ref := callRef(fset, file, call, index, scope)
-	if ref.Symbol == "" {
-		return ref, false
+	decision := decideCallTrace(fset, file, call, scope, index, depth, via, ruleSet, stdlibPackageAliases)
+	if !decision.Trace {
+		return decision.Ref, false
 	}
-	if _, ok := grpcCode(call); ok {
-		return ref, false
-	}
-	if isNoiseCall(ref, ruleSet.Ignore, stdlibPackageAliases, scope) {
-		return ref, false
-	}
-	ref.Depth = depth
-	ref.Via = via
-	appendBranchCall(branchCase, ref, classify(ref, scope, ruleSet.Layers), ruleSet)
-	return ref, true
+	appendBranchCall(branchCase, decision.Ref, classify(decision.Ref, scope, ruleSet.Layers), ruleSet)
+	return decision.Ref, true
 }
 
 func recordBranchImplementation(fset *token.FileSet, branchCase *model.BranchCase, info functionInfo, via string, depth int, ruleSet rules.RuleSet) {
-	pos := fset.Position(info.fn.Pos())
-	ref := model.CallRef{
-		Symbol:   implementationSymbol(info),
-		Receiver: info.receiverType,
-		Method:   info.fn.Name.Name,
-		File:     info.file,
-		Line:     pos.Line,
-		Depth:    depth,
-		Via:      via,
-	}
+	ref := implementationRef(fset, info, via, depth)
 	appendBranchCall(branchCase, ref, classifyByFile(ref, info.file, ruleSet.Layers), ruleSet)
 }
 

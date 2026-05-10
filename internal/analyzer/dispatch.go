@@ -412,20 +412,12 @@ func recordDispatchCaseCall(
 	ruleSet rules.RuleSet,
 	stdlibPackageAliases map[string]bool,
 ) (model.CallRef, bool) {
-	ref := callRef(fset, file, call, index, scope)
-	if ref.Symbol == "" {
-		return ref, false
+	decision := decideCallTrace(fset, file, call, scope, index, depth, via, ruleSet, stdlibPackageAliases)
+	if !decision.Trace {
+		return decision.Ref, false
 	}
-	if _, ok := grpcCode(call); ok {
-		return ref, false
-	}
-	if isNoiseCall(ref, ruleSet.Ignore, stdlibPackageAliases, scope) {
-		return ref, false
-	}
-	ref.Depth = depth
-	ref.Via = via
-	appendDispatchCaseCall(dispatchCase, ref, classify(ref, scope, ruleSet.Layers), ruleSet)
-	return ref, true
+	appendDispatchCaseCall(dispatchCase, decision.Ref, classify(decision.Ref, scope, ruleSet.Layers), ruleSet)
+	return decision.Ref, true
 }
 
 func recordDispatchImplementation(fset *token.FileSet, dispatchCase *model.DispatchCase, info functionInfo, via string, depth int, ruleSet rules.RuleSet) {
