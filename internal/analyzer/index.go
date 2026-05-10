@@ -10,9 +10,9 @@ type functionInfo struct {
 	file                 string
 	packageName          string
 	receiverType         string
+	receiverTypeKey      string
 	receiverVar          string
 	returnType           string
-	fieldTypes           map[string]map[string]string
 	stdlibPackageAliases map[string]bool
 }
 
@@ -37,24 +37,23 @@ func buildProjectIndex(fset *token.FileSet, sources []parsedSource) projectIndex
 		dispatchTables:           make(map[string]dispatchTableInfo),
 	}
 	for _, source := range sources {
-		collectInterfaces(source.file, index.interfaces)
-		collectImplementationAssertions(source.file, index.implementationAssertions)
-		for name, fields := range source.fieldTypes {
-			index.structFields[name] = fields
-		}
+		collectInterfaces(source.packageName, source.file, index.interfaces)
+		collectImplementationAssertions(source.packageName, source.file, index.implementationAssertions)
+		addStructFields(source.packageName, source.fieldTypes, index.structFields)
 		for _, decl := range source.file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok {
 				continue
 			}
+			receiverType := receiverName(fn)
 			info := functionInfo{
 				fn:                   fn,
 				file:                 source.displayPath,
 				packageName:          source.packageName,
-				receiverType:         receiverName(fn),
+				receiverType:         receiverType,
+				receiverTypeKey:      typeKey(source.packageName, receiverType),
 				receiverVar:          receiverVarName(fn),
 				returnType:           firstReturnType(fn),
-				fieldTypes:           index.structFields,
 				stdlibPackageAliases: source.stdlibPackageAliases,
 			}
 			if fn.Recv == nil {
@@ -62,19 +61,36 @@ func buildProjectIndex(fset *token.FileSet, sources []parsedSource) projectIndex
 				continue
 			}
 			index.methodsByName[fn.Name.Name] = append(index.methodsByName[fn.Name.Name], info)
-			if index.methodsByReceiver[info.receiverType] == nil {
-				index.methodsByReceiver[info.receiverType] = make(map[string]bool)
-			}
-			index.methodsByReceiver[info.receiverType][fn.Name.Name] = true
+			addReceiverMethod(index.methodsByReceiver, info.receiverTypeKey, fn.Name.Name)
+			addReceiverMethod(index.methodsByReceiver, info.receiverType, fn.Name.Name)
 		}
 	}
 	for _, source := range sources {
-		collectDispatchTables(fset, source.file, &index)
+		collectDispatchTables(fset, source.packageName, source.file, &index)
 	}
 	return index
 }
 
-func collectImplementationAssertions(file *ast.File, assertions map[string]map[string]bool) {
+func addStructFields(packageName string, fieldTypes map[string]map[string]string, out map[string]map[string]string) {
+	for name, fields := range fieldTypes {
+		out[typeKey(packageName, name)] = fields
+		if _, exists := out[name]; !exists {
+			out[name] = fields
+		}
+	}
+}
+
+func addReceiverMethod(methodsByReceiver map[string]map[string]bool, receiverType string, methodName string) {
+	if receiverType == "" {
+		return
+	}
+	if methodsByReceiver[receiverType] == nil {
+		methodsByReceiver[receiverType] = make(map[string]bool)
+	}
+	methodsByReceiver[receiverType][methodName] = true
+}
+
+func collectImplementationAssertions(packageName string, file *ast.File, assertions map[string]map[string]bool) {
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.VAR {
@@ -85,19 +101,27 @@ func collectImplementationAssertions(file *ast.File, assertions map[string]map[s
 			if !ok || len(valueSpec.Names) != 1 || valueSpec.Names[0].Name != "_" || valueSpec.Type == nil {
 				continue
 			}
-			interfaceType := baseType(typeString(valueSpec.Type))
+			interfaceType := typeKey(packageName, typeString(valueSpec.Type))
 			for _, value := range valueSpec.Values {
 				concreteType := assertedConcreteType(value)
 				if concreteType == "" {
 					continue
 				}
-				if assertions[interfaceType] == nil {
-					assertions[interfaceType] = make(map[string]bool)
-				}
-				assertions[interfaceType][concreteType] = true
+				addImplementationAssertion(assertions, interfaceType, typeKey(packageName, concreteType))
+				addImplementationAssertion(assertions, baseType(interfaceType), concreteType)
 			}
 		}
 	}
+}
+
+func addImplementationAssertion(assertions map[string]map[string]bool, interfaceType string, concreteType string) {
+	if interfaceType == "" || concreteType == "" {
+		return
+	}
+	if assertions[interfaceType] == nil {
+		assertions[interfaceType] = make(map[string]bool)
+	}
+	assertions[interfaceType][concreteType] = true
 }
 
 func assertedConcreteType(expr ast.Expr) string {
@@ -116,7 +140,7 @@ func assertedConcreteType(expr ast.Expr) string {
 	return baseType(typeString(star.X))
 }
 
-func collectInterfaces(file *ast.File, interfaces map[string]map[string]bool) {
+func collectInterfaces(packageName string, file *ast.File, interfaces map[string]map[string]bool) {
 	for _, decl := range file.Decls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.TYPE {
@@ -137,7 +161,10 @@ func collectInterfaces(file *ast.File, interfaces map[string]map[string]bool) {
 					methods[name.Name] = true
 				}
 			}
-			interfaces[typeSpec.Name.Name] = methods
+			interfaces[typeKey(packageName, typeSpec.Name.Name)] = methods
+			if _, exists := interfaces[typeSpec.Name.Name]; !exists {
+				interfaces[typeSpec.Name.Name] = methods
+			}
 		}
 	}
 }

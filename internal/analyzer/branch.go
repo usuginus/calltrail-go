@@ -136,7 +136,7 @@ func traceFunctionCallsForBranchCase(
 	if currentDepth > maxDepth {
 		return
 	}
-	scope := newScope(fset, info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
+	scope := newScope(fset, info.fn, index, info.packageName, info.receiverType, info.receiverVar)
 	ast.Inspect(info.fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt:

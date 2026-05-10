@@ -10,7 +10,9 @@ import (
 )
 
 type scopeInfo struct {
+	packageName     string
 	receiverType    string
+	receiverTypeKey string
 	receiverVar     string
 	receiverFields  map[string]string
 	localTypes      map[string]string
@@ -23,12 +25,15 @@ type resolvedCall struct {
 	candidates    []functionInfo
 }
 
-func newScope(fset *token.FileSet, fn *ast.FuncDecl, index projectIndex, receiverType string, receiverVar string, receiverFields map[string]string) scopeInfo {
+func newScope(fset *token.FileSet, fn *ast.FuncDecl, index projectIndex, packageName string, receiverType string, receiverVar string) scopeInfo {
+	receiverTypeKey := typeKey(packageName, receiverType)
 	scope := scopeInfo{
-		receiverType:   receiverType,
-		receiverVar:    receiverVar,
-		receiverFields: receiverFields,
-		structFields:   index.structFields,
+		packageName:     packageName,
+		receiverType:    receiverType,
+		receiverTypeKey: receiverTypeKey,
+		receiverVar:     receiverVar,
+		receiverFields:  lookupTypeMembers(index.structFields, receiverTypeKey, receiverType),
+		structFields:    index.structFields,
 	}
 	scope.localTypes = collectLocalTypes(fn.Body, index, scope)
 	scope.localDispatches = collectLocalDispatches(fset, fn.Body, index, scope)
@@ -42,12 +47,14 @@ func resolveCandidates(ref model.CallRef, scope scopeInfo, index projectIndex, r
 func resolveCall(ref model.CallRef, scope scopeInfo, index projectIndex, ruleSet rules.RuleSet) resolvedCall {
 	resolvedType := resolveReceiverType(ref.Receiver, scope)
 	fieldType := baseType(resolvedType)
-	fieldTypeIsInterface := fieldType != "" && len(index.interfaces[fieldType]) > 0
-	if fieldTypeIsInterface && !strings.Contains(resolvedType, ".") && len(index.structFields[fieldType]) > 0 {
+	fieldTypeKey := typeKey(scope.packageName, resolvedType)
+	interfaceMethods := lookupTypeMembers(index.interfaces, fieldTypeKey, fieldType)
+	fieldTypeIsInterface := fieldType != "" && len(interfaceMethods) > 0
+	if fieldTypeIsInterface && !strings.Contains(resolvedType, ".") && len(lookupTypeMembers(index.structFields, fieldTypeKey, fieldType)) > 0 {
 		fieldTypeIsInterface = false
 	}
 	if fieldTypeIsInterface {
-		if methods := index.interfaces[fieldType]; len(methods) > 0 && !methods[ref.Method] {
+		if len(interfaceMethods) > 0 && !interfaceMethods[ref.Method] {
 			return resolvedCall{interfaceType: fieldType}
 		}
 	}
@@ -57,27 +64,31 @@ func resolveCall(ref model.CallRef, scope scopeInfo, index projectIndex, ruleSet
 		if candidate.fn == nil || candidate.receiverType == "" {
 			continue
 		}
-		if fieldTypeIsInterface && candidate.receiverType == fieldType {
+		if fieldTypeIsInterface && candidate.receiverType == fieldType && candidate.receiverTypeKey == fieldTypeKey {
 			continue
 		}
 		if isMockCandidate(candidate, ruleSet.Resolution) {
 			continue
 		}
 		if fieldTypeIsInterface {
-			if asserted := index.implementationAssertions[fieldType]; len(asserted) > 0 && !asserted[candidate.receiverType] {
+			if asserted := lookupTypeMembers(index.implementationAssertions, fieldTypeKey, fieldType); len(asserted) > 0 &&
+				!asserted[candidate.receiverTypeKey] && !asserted[candidate.receiverType] {
 				continue
 			}
-			if !implementsInterface(candidate.receiverType, fieldType, index) {
+			if !implementsInterface(candidate, fieldTypeKey, fieldType, index) {
 				continue
 			}
 		}
-		if fieldType != "" && !fieldTypeIsInterface && candidate.receiverType != fieldType {
+		if fieldType != "" && !fieldTypeIsInterface && candidate.receiverTypeKey != fieldTypeKey && candidate.receiverType != fieldType {
 			continue
 		}
 		if fieldType == "" && candidate.receiverType != strings.TrimPrefix(ref.Receiver, "*") {
 			continue
 		}
 		candidates = append(candidates, candidate)
+	}
+	if fieldTypeIsInterface {
+		candidates = preferNamedInterfaceImplementations(candidates, fieldType, fieldTypeKey)
 	}
 	out := resolvedCall{
 		candidates: candidates,
@@ -88,12 +99,25 @@ func resolveCall(ref model.CallRef, scope scopeInfo, index projectIndex, ruleSet
 	return out
 }
 
-func implementsInterface(receiverType string, interfaceType string, index projectIndex) bool {
-	interfaceMethods := index.interfaces[interfaceType]
+func preferNamedInterfaceImplementations(candidates []functionInfo, interfaceType string, interfaceTypeKey string) []functionInfo {
+	var named []functionInfo
+	for _, candidate := range candidates {
+		if candidate.receiverType == interfaceType && candidate.receiverTypeKey != interfaceTypeKey {
+			named = append(named, candidate)
+		}
+	}
+	if len(named) == 0 {
+		return candidates
+	}
+	return named
+}
+
+func implementsInterface(candidate functionInfo, interfaceTypeKey string, interfaceType string, index projectIndex) bool {
+	interfaceMethods := lookupTypeMembers(index.interfaces, interfaceTypeKey, interfaceType)
 	if len(interfaceMethods) == 0 {
 		return true
 	}
-	receiverMethods := index.methodsByReceiver[receiverType]
+	receiverMethods := lookupTypeMembers(index.methodsByReceiver, candidate.receiverTypeKey, candidate.receiverType)
 	if len(receiverMethods) == 0 {
 		return false
 	}
@@ -263,7 +287,7 @@ func resolveReceiverType(receiver string, scope scopeInfo) string {
 		return ""
 	}
 	if receiver == scope.receiverVar {
-		return scope.receiverType
+		return scope.receiverTypeKey
 	}
 	if typ := scope.localTypes[receiver]; typ != "" {
 		return typ
@@ -273,17 +297,17 @@ func resolveReceiverType(receiver string, scope scopeInfo) string {
 		return ""
 	}
 	if parts[0] == scope.receiverVar {
-		return resolveFieldChain(scope.receiverFields[parts[1]], parts[2:], scope.structFields)
+		return resolveFieldChain(scope.receiverFields[parts[1]], parts[2:], scope)
 	}
 	if typ := scope.localTypes[parts[0]]; typ != "" {
-		return resolveFieldChain(typ, parts[1:], scope.structFields)
+		return resolveFieldChain(typ, parts[1:], scope)
 	}
 	return receiver
 }
 
-func resolveFieldChain(currentType string, fields []string, structFields map[string]map[string]string) string {
+func resolveFieldChain(currentType string, fields []string, scope scopeInfo) string {
 	for _, field := range fields {
-		typeFields := structFields[baseType(currentType)]
+		typeFields := lookupTypeMembers(scope.structFields, typeKey(scope.packageName, currentType), baseType(currentType))
 		if typeFields == nil {
 			return currentType
 		}
@@ -294,4 +318,16 @@ func resolveFieldChain(currentType string, fields []string, structFields map[str
 		currentType = nextType
 	}
 	return currentType
+}
+
+func lookupTypeMembers[T any](membersByType map[string]map[string]T, typeKeys ...string) map[string]T {
+	for _, key := range typeKeys {
+		if key == "" {
+			continue
+		}
+		if members := membersByType[key]; members != nil {
+			return members
+		}
+	}
+	return nil
 }

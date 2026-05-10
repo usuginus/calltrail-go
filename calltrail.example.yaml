@@ -89,38 +89,18 @@ layers:
   #       - /domain/service/
   #       - /domain/services/
 
-  - name: repository
-    match:
-      call_name_contains:
-        - repository
-      receiver_type_contains:
-        - repository
-      file_path_contains:
-        - /repository/
-        - /repositories/
-
-  # Persistence aliases:
-  # - name: repository
-  #   match:
-  #     call_name_contains:
-  #       - persistence
-  #       - dao
-  #     receiver_type_contains:
-  #       - persistence
-  #       - dao
-  #     file_path_contains:
-  #       - /persistence/
-  #       - /dao/
-
   - name: external_client
     match:
       call_name_contains:
         - client
+        - webapi
       receiver_type_contains:
         - client
+        - webapi
       file_path_contains:
         - /client/
         - /clients/
+        - /webapi/
 
   # External-boundary aliases:
   # - name: external_client
@@ -140,6 +120,35 @@ layers:
   #       - /integrations/
   #       - /provider/
   #       - /providers/
+
+  - name: repository
+    match:
+      call_name_contains:
+        - repository
+        - repo.
+        - .repo.
+      receiver_type_contains:
+        - repository
+        - repo
+      file_path_contains:
+        - /repository/
+        - /repositories/
+        - /repo/
+        - /repos/
+        - /persistent/
+
+  # Persistence aliases:
+  # - name: repository
+  #   match:
+  #     call_name_contains:
+  #       - persistence
+  #       - dao
+  #     receiver_type_contains:
+  #       - persistence
+  #       - dao
+  #     file_path_contains:
+  #       - /persistence/
+  #       - /dao/
 
   - name: converter
     match:
@@ -184,11 +193,15 @@ layers:
     match:
       call_name_contains:
         - model.
+        - entity.
       receiver_type_contains:
         - model
+        - entity
       file_path_contains:
         - /model/
         - /models/
+        - /entity/
+        - /entities/
 
   # Domain-model aliases:
   # - name: model

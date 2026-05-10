@@ -28,13 +28,13 @@ type dispatchLookupInfo struct {
 	Info  dispatchTableInfo
 }
 
-func collectDispatchTables(fset *token.FileSet, file *ast.File, index *projectIndex) {
+func collectDispatchTables(fset *token.FileSet, packageName string, file *ast.File, index *projectIndex) {
 	ast.Inspect(file, func(node ast.Node) bool {
 		lit, ok := node.(*ast.CompositeLit)
 		if !ok {
 			return true
 		}
-		ownerType := baseType(typeString(lit.Type))
+		ownerType := typeKey(packageName, typeString(lit.Type))
 		if ownerType == "" {
 			return true
 		}
@@ -165,7 +165,7 @@ func concreteReturnType(info functionInfo, index projectIndex) string {
 		return ""
 	}
 	declared := baseType(info.returnType)
-	if declared != "" && len(index.interfaces[declared]) == 0 {
+	if declared != "" && len(lookupTypeMembers(index.interfaces, typeKey(info.packageName, info.returnType), declared)) == 0 {
 		return baseType(info.returnType)
 	}
 	var typ string
@@ -191,6 +191,14 @@ func concreteReturnType(info functionInfo, index projectIndex) string {
 
 func addDispatchTable(index *projectIndex, table dispatchTableInfo) {
 	key := dispatchTableKey(table.OwnerType, table.FieldName)
+	addDispatchTableByKey(index, key, table)
+	fallbackKey := dispatchTableKey(baseType(table.OwnerType), table.FieldName)
+	if fallbackKey != key {
+		addDispatchTableByKey(index, fallbackKey, table)
+	}
+}
+
+func addDispatchTableByKey(index *projectIndex, key string, table dispatchTableInfo) {
 	existing := index.dispatchTables[key]
 	if existing.OwnerType == "" {
 		existing = table
@@ -378,7 +386,7 @@ func traceFunctionCallsForDispatchCase(
 	if currentDepth > maxDepth {
 		return
 	}
-	scope := newScope(fset, info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
+	scope := newScope(fset, info.fn, index, info.packageName, info.receiverType, info.receiverVar)
 	ast.Inspect(info.fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.SwitchStmt, *ast.TypeSwitchStmt:
