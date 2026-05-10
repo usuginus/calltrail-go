@@ -10,7 +10,7 @@ import (
 
 func buildFlow(fset *token.FileSet, source parsedSource, fn *ast.FuncDecl, index projectIndex, opts Options) model.APIFlow {
 	receiverType := receiverName(fn)
-	scope := newScope(fset, fn, index, receiverType, receiverVarName(fn), index.structFields[receiverType])
+	scope := newScope(fset, fn, index, source.packageName, receiverType, receiverVarName(fn))
 	flow := buildFlowHeader(fset, source, fn)
 	flow.Trail = model.NewTrail(layerNames(opts.Rules.Layers))
 
@@ -86,7 +86,7 @@ func traceFunctionCalls(
 	if currentDepth > maxDepth {
 		return
 	}
-	scope := newScope(fset, info.fn, index, info.receiverType, info.receiverVar, info.fieldTypes[info.receiverType])
+	scope := newScope(fset, info.fn, index, info.packageName, info.receiverType, info.receiverVar)
 	ast.Inspect(info.fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.SwitchStmt:

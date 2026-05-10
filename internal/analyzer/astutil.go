@@ -16,6 +16,14 @@ func baseType(typeName string) string {
 	return typeName
 }
 
+func typeKey(packageName string, typeName string) string {
+	typeName = strings.TrimPrefix(typeName, "*")
+	if typeName == "" || strings.Contains(typeName, ".") || packageName == "" {
+		return typeName
+	}
+	return packageName + "." + typeName
+}
+
 func receiverName(fn *ast.FuncDecl) string {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return ""

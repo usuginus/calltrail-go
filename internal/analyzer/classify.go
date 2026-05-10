@@ -121,7 +121,7 @@ func hasKnownReceiverType(receiver string, scope scopeInfo) bool {
 	if _, ok := scope.localTypes[parts[0]]; ok {
 		return true
 	}
-	if _, ok := scope.structFields[baseType(parts[0])]; ok {
+	if fields := lookupTypeMembers(scope.structFields, typeKey(scope.packageName, parts[0]), baseType(parts[0])); fields != nil {
 		return true
 	}
 	if parts[0] == scope.receiverVar && len(parts) > 1 && scope.receiverFields[parts[1]] != "" {

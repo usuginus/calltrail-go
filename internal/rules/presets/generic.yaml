@@ -33,25 +33,48 @@ layers:
         - /service/
         - /services/
 
-  - name: repository
-    match:
-      call_name_contains:
-        - repository
-      receiver_type_contains:
-        - repository
-      file_path_contains:
-        - /repository/
-        - /repositories/
-
   - name: external_client
     match:
       call_name_contains:
         - client
+        - webapi
+        - gateway
+        - integration
+        - provider
       receiver_type_contains:
         - client
+        - webapi
+        - gateway
+        - integration
+        - provider
       file_path_contains:
         - /client/
         - /clients/
+        - /webapi/
+        - /gateway/
+        - /gateways/
+        - /integration/
+        - /integrations/
+        - /provider/
+        - /providers/
+
+  - name: repository
+    match:
+      call_name_contains:
+        - repository
+        - repo.
+        - .repo.
+      receiver_type_contains:
+        - repository
+        - repo
+      file_path_contains:
+        - /repository/
+        - /repositories/
+        - /repo/
+        - /repos/
+        - /persistent/
+        - /persistence/
+        - /dao/
 
   - name: converter
     match:
@@ -69,11 +92,23 @@ layers:
     match:
       call_name_contains:
         - model.
+        - entity.
+        - valueobject.
+        - aggregate.
       receiver_type_contains:
         - model
+        - entity
+        - valueobject
+        - aggregate
       file_path_contains:
         - /model/
         - /models/
+        - /entity/
+        - /entities/
+        - /valueobject/
+        - /valueobjects/
+        - /aggregate/
+        - /aggregates/
 
 ignore:
   standard_library: true

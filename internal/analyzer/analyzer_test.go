@@ -169,6 +169,37 @@ func TestAnalyzeDepthThreeFollowsNestedStructFieldCandidate(t *testing.T) {
 	}
 }
 
+func TestAnalyzeUsesPackageQualifiedStructFields(t *testing.T) {
+	flows, err := Analyze([]string{"testdata/package_collision"}, Options{
+		RPC:   "Translate",
+		Depth: 3,
+	})
+	if err != nil {
+		t.Fatalf("Analyze returned error: %v", err)
+	}
+	if len(flows) != 1 {
+		t.Fatalf("len(flows) = %d, want 1", len(flows))
+	}
+
+	flow := flows[0]
+	repoCall := findInterfaceCall(flow.Trail.InterfaceCalls, "uc.repo.Store")
+	if repoCall == nil {
+		t.Fatalf("interface calls = %#v, want uc.repo.Store", flow.Trail.InterfaceCalls)
+	}
+	if repoCall.Interface != "TranslationRepo" {
+		t.Fatalf("repository interface = %q, want TranslationRepo", repoCall.Interface)
+	}
+	if len(repoCall.Implementations) != 1 {
+		t.Fatalf("repository implementations = %#v, want one candidate", repoCall.Implementations)
+	}
+	if got := repoCall.Implementations[0].Call.Symbol; got != "TranslationRepo.Store" {
+		t.Fatalf("repository implementation = %q, want TranslationRepo.Store", got)
+	}
+	if hasCallImplementation(repoCall.Implementations, "UserRepo.Store") {
+		t.Fatalf("repository implementations = %#v, must not include UserRepo.Store", repoCall.Implementations)
+	}
+}
+
 func TestAnalyzeFollowsConstructorChainedAndLocalVariableCalls(t *testing.T) {
 	flows, err := Analyze([]string{"testdata/chained"}, Options{Depth: 4})
 	if err != nil {
@@ -472,6 +503,24 @@ func hasCall(calls []model.CallRef, symbol string) bool {
 		}
 	}
 	return false
+}
+
+func hasCallImplementation(candidates []model.ImplementationCandidate, symbol string) bool {
+	for _, candidate := range candidates {
+		if candidate.Call.Symbol == symbol {
+			return true
+		}
+	}
+	return false
+}
+
+func findInterfaceCall(calls []model.InterfaceCallTrace, symbol string) *model.InterfaceCallTrace {
+	for i := range calls {
+		if calls[i].Call.Symbol == symbol {
+			return &calls[i]
+		}
+	}
+	return nil
 }
 
 func findBranch(branches []model.BranchTrace, kind string, expr string) *model.BranchTrace {
