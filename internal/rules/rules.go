@@ -106,10 +106,33 @@ func loadPreset(name string) (RuleSet, error) {
 }
 
 func (r RuleSet) IsZero() bool {
-	return len(r.Handlers.Match.PackageNames) == 0 &&
-		len(r.Handlers.Match.FilePathContains) == 0 &&
+	return r.Handlers.isZero() &&
 		len(r.Layers) == 0 &&
-		len(r.Ignore.Calls.FullNames) == 0 &&
-		len(r.Ignore.Calls.PackageNames) == 0 &&
-		!r.Ignore.StandardLibrary
+		r.Ignore.isZero() &&
+		r.Resolution.isZero()
+}
+
+func (r HandlerRules) isZero() bool {
+	return len(r.Match.PackageNames) == 0 &&
+		len(r.Match.FilePathContains) == 0 &&
+		!r.Signature.RequireContextFirstArg &&
+		!r.Signature.RequirePointerRequest &&
+		!r.Signature.RequirePointerResponse &&
+		!r.Signature.RequireErrorReturn
+}
+
+func (r IgnoreRules) isZero() bool {
+	return !r.StandardLibrary &&
+		len(r.Calls.FullNames) == 0 &&
+		len(r.Calls.PackageNames) == 0 &&
+		len(r.Calls.MethodNames) == 0 &&
+		len(r.Calls.MethodNamePrefixes) == 0 &&
+		len(r.Calls.FullNamePrefixes) == 0 &&
+		!r.Getters.LocalValues &&
+		len(r.Getters.ReceiverNames) == 0
+}
+
+func (r ResolutionRules) isZero() bool {
+	return len(r.SkipImplementations.ReceiverNamePrefixes) == 0 &&
+		len(r.SkipImplementations.FilePathContains) == 0
 }
